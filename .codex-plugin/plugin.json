@@ -1,0 +1,40 @@
+{
+  "name": "gh-agent",
+  "version": "0.1.0",
+  "description": "Codex plugin guidance for working with GitHub issues, branches, commits, and pull requests.",
+  "author": {
+    "name": "OpenAI",
+    "email": "support@openai.com",
+    "url": "https://openai.com/"
+  },
+  "homepage": "https://github.com/openai/gh-agent-plugin",
+  "repository": "https://github.com/openai/gh-agent-plugin",
+  "license": "MIT",
+  "keywords": [
+    "github",
+    "issues",
+    "pull-requests",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "GitHub Agent",
+    "shortDescription": "Work from GitHub issues to polished pull requests.",
+    "longDescription": "Adds a focused workflow for Codex agents that need to inspect GitHub issue context, implement changes safely, validate them, and prepare clear pull requests.",
+    "developerName": "OpenAI",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://openai.com/",
+    "privacyPolicyURL": "https://openai.com/policies/row-privacy-policy/",
+    "termsOfServiceURL": "https://openai.com/policies/row-terms-of-use/",
+    "defaultPrompt": [
+      "Implement GitHub issue #1.",
+      "Review this PR and suggest fixes.",
+      "Summarize open issues for this repo."
+    ],
+    "brandColor": "#24292F"
+  }
+}
