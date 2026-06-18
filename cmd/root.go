@@ -13,16 +13,19 @@ import (
 	"strings"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
+	"github.com/f4ah6o/gh-agent-plugin/internal/cache"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
 )
 
-// Env carries the I/O streams and adapter registry a command needs. It is
-// injected so tests can swap streams and use a fake runner.
+// Env carries the I/O streams, adapter registry, and source cache a command
+// needs. It is injected so tests can swap streams, use a fake runner, and use a
+// fake git for the GitHub-source cache.
 type Env struct {
 	Ctx    context.Context
 	Stdout io.Writer
 	Stderr io.Writer
 	Reg    *adapter.Registry
+	Cache  *cache.Cache
 }
 
 // commandFunc is the signature every subcommand implements.
@@ -57,6 +60,12 @@ func Main(args []string) int {
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		Reg:    adapter.NewRegistry(adapter.ExecRunner{}),
+	}
+	// A nil cache here defers the "cannot determine cache dir" error to the one
+	// command (preview of a GitHub source) that actually needs it, so the rest of
+	// the CLI keeps working even in an environment without a usable cache dir.
+	if c, err := cache.New("", nil); err == nil {
+		env.Cache = c
 	}
 	return Execute(args, env)
 }

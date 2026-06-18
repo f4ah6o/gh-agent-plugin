@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
+	"github.com/f4ah6o/gh-agent-plugin/internal/cache"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
 )
 
@@ -210,6 +213,72 @@ func TestPreview_LocalSample(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "\"name\": \"example\"") {
 		t.Fatalf("preview JSON missing plugin name:\n%s", out.String())
+	}
+}
+
+// fakeGit clones by materializing a minimal claude-code plugin tree so discovery
+// finds a real plugin without touching the network.
+type fakeGit struct {
+	ref string
+}
+
+func (g *fakeGit) Clone(_ context.Context, _, ref, dir string) error {
+	g.ref = ref
+	root := filepath.Join(dir, "plugins", "formatter")
+	if err := os.MkdirAll(filepath.Join(root, ".claude-plugin"), 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, ".claude-plugin", "plugin.json"), []byte(`{"name":"formatter"}`), 0o644)
+}
+
+func (g *fakeGit) Revision(context.Context, string) (string, error) {
+	return "feedfacefeedfacefeedfacefeedfacefeedface", nil
+}
+
+func TestPreview_GitHubSource_ClonesAndRecordsRevision(t *testing.T) {
+	env, out, errOut := newTestEnv(&adapter.RecordingRunner{})
+	git := &fakeGit{}
+	c, err := cache.New(t.TempDir(), git)
+	if err != nil {
+		t.Fatalf("cache.New: %v", err)
+	}
+	env.Cache = c
+
+	code := Execute([]string{"preview", "acme/plugins", "formatter", "--ref", "v2.1.0", "--json"}, env)
+	if code != exit.OK {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if git.ref != "v2.1.0" {
+		t.Fatalf("clone ref = %q, want v2.1.0", git.ref)
+	}
+	var got struct {
+		Plugin struct {
+			Name string `json:"name"`
+		} `json:"plugin"`
+		Source map[string]string `json:"source"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+	}
+	if got.Plugin.Name != "formatter" {
+		t.Fatalf("plugin name = %q, want formatter", got.Plugin.Name)
+	}
+	if got.Source["type"] != "github" || got.Source["repository"] != "acme/plugins" {
+		t.Fatalf("unexpected source metadata: %+v", got.Source)
+	}
+	if got.Source["ref"] != "v2.1.0" || got.Source["revision"] != "feedfacefeedfacefeedfacefeedfacefeedface" {
+		t.Fatalf("ref/revision not recorded: %+v", got.Source)
+	}
+}
+
+func TestPreview_GitHubSource_NoCacheConfigured(t *testing.T) {
+	env, _, _ := newTestEnv(&adapter.RecordingRunner{}) // env.Cache is nil
+	code := Execute([]string{"preview", "acme/plugins", "formatter"}, env)
+	if code != exit.GeneralError {
+		t.Fatalf("exit = %d, want %d when no cache is configured", code, exit.GeneralError)
 	}
 }
 
