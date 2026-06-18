@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/discovery"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
@@ -78,7 +80,11 @@ func resolveRepoRoot(spec source.Spec) (string, map[string]string, error) {
 		return "", nil, exit.Errorf(exit.GeneralError,
 			"previewing a GitHub source requires a local checkout in this phase; use --from-local with a cloned path")
 	default:
-		return "", nil, exit.Errorf(exit.InvalidArguments, "preview supports local or GitHub sources")
+		// PLUGIN@MARKETPLACE is valid syntax but previewing a configured
+		// marketplace source is not supported yet (it has no local files to
+		// inspect), so this is an unsupported capability rather than a usage
+		// error.
+		return "", nil, exit.Errorf(exit.UnsupportedCapability, "preview supports local or GitHub sources, not a marketplace selector")
 	}
 }
 
@@ -133,14 +139,10 @@ func joinMap(m map[string]string) string {
 	if len(m) == 0 {
 		return "(none)"
 	}
-	out := ""
-	first := true
+	keys := make([]string, 0, len(m))
 	for k := range m {
-		if !first {
-			out += ", "
-		}
-		out += k
-		first = false
+		keys = append(keys, k)
 	}
-	return out
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }

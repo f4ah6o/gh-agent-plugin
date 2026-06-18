@@ -62,10 +62,11 @@ func (c *Codex) rejectScope(s Scope) error {
 }
 
 func (c *Codex) ListMarketplaces(ctx context.Context) ([]Marketplace, error) {
-	if _, _, err := c.Runner.Run(ctx, codexBin, "plugin", "marketplace", "list"); err != nil {
-		return nil, nativeErr(c.ID(), err)
-	}
-	return nil, nil
+	// Codex exposes no machine-readable marketplace listing, so report the
+	// limitation explicitly rather than returning an empty-but-successful list
+	// (which callers could mistake for "no marketplaces configured"). Phase 2.
+	return nil, exit.Errorf(exit.UnsupportedCapability,
+		"agent %s cannot enumerate marketplaces (no machine-readable output; Phase 2)", c.ID())
 }
 
 func (c *Codex) AddMarketplace(ctx context.Context, req AddMarketplaceRequest) error {

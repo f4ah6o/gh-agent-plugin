@@ -78,6 +78,10 @@ func marketplaceList(args []string, env *Env) error {
 	for _, ad := range adapters {
 		ms, err := ad.ListMarketplaces(env.Ctx)
 		if err != nil {
+			if exit.CodeOf(err) == exit.UnsupportedCapability {
+				fmt.Fprintf(env.Stderr, "note: %s\n", err.Error())
+				continue
+			}
 			return err
 		}
 		markets = append(markets, ms...)

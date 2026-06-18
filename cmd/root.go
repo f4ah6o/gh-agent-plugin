@@ -250,6 +250,11 @@ func (c *commonFlags) selectAdapters(env *Env) ([]adapter.Adapter, error) {
 //   - all failed, shared code  -> that code (e.g. unsupported capability 4)
 //   - all failed, mixed codes  -> native CLI failure (8)
 func finalize(action string, results []agentResult, errs []error) error {
+	if len(results) == 0 {
+		// No targets acted on (e.g. nothing to do); treat as success rather than
+		// synthesizing a misleading failure code.
+		return nil
+	}
 	var ok, fail int
 	for _, r := range results {
 		if r.OK {

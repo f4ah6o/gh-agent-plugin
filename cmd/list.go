@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
+	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
 	"github.com/f4ah6o/gh-agent-plugin/internal/output"
 )
 
@@ -31,6 +34,13 @@ func runList(args []string, env *Env) error {
 	for _, ad := range adapters {
 		ps, err := ad.ListPlugins(env.Ctx, adapter.ListRequest{Scope: adapter.Scope(cf.scope)})
 		if err != nil {
+			// An agent that cannot enumerate plugins (Phase 1 Claude Code) is
+			// noted on stderr so the user knows why it is absent, without
+			// failing the whole command for the agents that can list.
+			if exit.CodeOf(err) == exit.UnsupportedCapability {
+				fmt.Fprintf(env.Stderr, "note: %s\n", err.Error())
+				continue
+			}
 			return err
 		}
 		plugins = append(plugins, ps...)

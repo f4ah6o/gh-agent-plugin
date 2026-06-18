@@ -79,10 +79,10 @@ func TestInstall_InterspersedFlagsAfterPositionals(t *testing.T) {
 	_ = out
 }
 
-func TestInstall_GitHubRollbackOnFailure(t *testing.T) {
+func TestInstall_NoRollbackWhenExistenceUnknown(t *testing.T) {
 	r := &adapter.RecordingRunner{
 		LookPaths: map[string]string{"claude": "/usr/bin/claude"},
-		// Make the native install fail so rollback must kick in.
+		// Make the native install fail.
 		Errs: map[string]error{"claude plugin install formatter@plugins": errors.New("boom")},
 	}
 	env, _, _ := newTestEnv(r)
@@ -90,9 +90,24 @@ func TestInstall_GitHubRollbackOnFailure(t *testing.T) {
 	if code != exit.NativeCLIFailure {
 		t.Fatalf("exit = %d, want %d", code, exit.NativeCLIFailure)
 	}
-	// The marketplace registered for this install must be rolled back.
-	if !calledWith(r, "claude", "plugin marketplace remove plugins") {
-		t.Fatalf("expected marketplace rollback; calls=%v", r.Calls)
+	// Claude cannot enumerate marketplaces, so we cannot confirm the marketplace
+	// was newly created. A failed install must therefore NOT remove it — doing so
+	// could delete a user's pre-existing marketplace.
+	if calledWith(r, "claude", "plugin marketplace remove plugins") {
+		t.Fatalf("must not roll back a marketplace of unknown prior existence; calls=%v", r.Calls)
+	}
+}
+
+func TestInstall_RejectsRef(t *testing.T) {
+	r := &adapter.RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
+	env, _, _ := newTestEnv(r)
+	code := Execute([]string{"install", "acme/plugins", "formatter", "--agent", "claude-code", "--ref", "v1.2.0"}, env)
+	if code != exit.UnsupportedCapability {
+		t.Fatalf("exit = %d, want %d (--ref should be rejected)", code, exit.UnsupportedCapability)
+	}
+	// Nothing should have been installed.
+	if calledWith(r, "claude", "plugin install formatter@plugins") {
+		t.Fatalf("install should not run when --ref is rejected; calls=%v", r.Calls)
 	}
 }
 
@@ -134,6 +149,59 @@ func TestPreview_LocalSample(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "\"name\": \"example\"") {
 		t.Fatalf("preview JSON missing plugin name:\n%s", out.String())
+	}
+}
+
+func TestUpdateAll_EnumeratesCodexPlugins(t *testing.T) {
+	r := &adapter.RecordingRunner{
+		LookPaths: map[string]string{"codex": "/usr/bin/codex"},
+		Stdout: map[string]string{
+			"codex plugin list --json": `[{"id":"formatter@company","name":"formatter","marketplace":"company","version":"1.0.0","status":"installed"}]`,
+		},
+	}
+	env, _, errOut := newTestEnv(r)
+	code := Execute([]string{"update", "--all", "--agent", "codex"}, env)
+	if code != exit.OK {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	// --all enumerates installed plugins and refreshes each by ID; it must never
+	// issue an empty selector.
+	if !calledWith(r, "codex", "plugin add formatter@company") {
+		t.Fatalf("expected per-plugin update; calls=%v", r.Calls)
+	}
+	if calledWith(r, "codex", "plugin add ") {
+		t.Fatalf("update --all issued an empty selector; calls=%v", r.Calls)
+	}
+}
+
+func TestUpdateAll_UnsupportedForClaude(t *testing.T) {
+	r := &adapter.RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
+	env, _, _ := newTestEnv(r)
+	// Claude cannot enumerate plugins, so update --all surfaces that explicitly.
+	code := Execute([]string{"update", "--all", "--agent", "claude-code"}, env)
+	if code != exit.UnsupportedCapability {
+		t.Fatalf("exit = %d, want %d", code, exit.UnsupportedCapability)
+	}
+}
+
+func TestList_ClaudeUnsupportedNoteStillExitsZero(t *testing.T) {
+	r := &adapter.RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
+	env, out, errOut := newTestEnv(r)
+	code := Execute([]string{"list", "--json"}, env)
+	if code != exit.OK {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(errOut.String(), "cannot enumerate plugins") {
+		t.Fatalf("expected an explanatory note on stderr, got %q", errOut.String())
+	}
+	var got struct {
+		Plugins []any `json:"plugins"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+	}
+	if len(got.Plugins) != 0 {
+		t.Fatalf("expected empty plugins, got %d", len(got.Plugins))
 	}
 }
 

@@ -83,13 +83,12 @@ type ListRequest struct {
 }
 
 type InstallRequest struct {
-	Plugin      string // plugin name or PLUGIN@MARKETPLACE selector
-	Marketplace string
-	Scope       Scope
-	Ref         string
-	DryRun      bool
-	Force       bool
-	Yes         bool
+	Plugin string // plugin name or PLUGIN@MARKETPLACE selector
+	Scope  Scope
+	Ref    string
+	DryRun bool
+	Force  bool
+	Yes    bool
 }
 
 type RemoveRequest struct {

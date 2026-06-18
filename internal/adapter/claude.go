@@ -51,11 +51,11 @@ func (*Claude) Capabilities(ctx context.Context) (Capabilities, error) {
 }
 
 // requireScope rejects an unsupported scope with exit code 4.
-func (c *Claude) requireScope(s Scope) error {
+func (c *Claude) requireScope(ctx context.Context, s Scope) error {
 	if s == "" {
 		return nil
 	}
-	caps, _ := c.Capabilities(context.Background())
+	caps, _ := c.Capabilities(ctx)
 	if !caps.SupportsScope(s) {
 		return exit.Errorf(exit.UnsupportedCapability, "agent %s does not support scope %q", c.ID(), s)
 	}
@@ -70,12 +70,11 @@ func scopeArgs(s Scope) []string {
 }
 
 func (c *Claude) ListMarketplaces(ctx context.Context) ([]Marketplace, error) {
-	if _, _, err := c.Runner.Run(ctx, claudeBin, "plugin", "marketplace", "list"); err != nil {
-		return nil, nativeErr(c.ID(), err)
-	}
-	// Parsing of native textual output is handled by the caller-facing list
-	// command; the adapter returns the configured entries it can identify.
-	return nil, nil
+	// Claude Code has no machine-readable marketplace listing, so rather than
+	// returning a misleading empty-but-successful result we surface the
+	// limitation explicitly. Structured parsing is tracked for Phase 2.
+	return nil, exit.Errorf(exit.UnsupportedCapability,
+		"agent %s cannot enumerate marketplaces (no machine-readable output; Phase 2)", c.ID())
 }
 
 func (c *Claude) AddMarketplace(ctx context.Context, req AddMarketplaceRequest) error {
@@ -114,18 +113,18 @@ func (c *Claude) RemoveMarketplace(ctx context.Context, req RemoveMarketplaceReq
 }
 
 func (c *Claude) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, error) {
-	if err := c.requireScope(req.Scope); err != nil {
+	if err := c.requireScope(ctx, req.Scope); err != nil {
 		return nil, err
 	}
-	args := append([]string{"plugin", "list"}, scopeArgs(req.Scope)...)
-	if _, _, err := c.Runner.Run(ctx, claudeBin, args...); err != nil {
-		return nil, nativeErr(c.ID(), err)
-	}
-	return nil, nil
+	// Claude Code's `plugin list` has no machine-readable form in Phase 1.
+	// Returning an explicit unsupported error keeps a core command honest
+	// instead of silently reporting an empty plugin set. (Phase 2 hardening.)
+	return nil, exit.Errorf(exit.UnsupportedCapability,
+		"agent %s cannot enumerate plugins (no machine-readable output; Phase 2)", c.ID())
 }
 
 func (c *Claude) InstallPlugin(ctx context.Context, req InstallRequest) error {
-	if err := c.requireScope(req.Scope); err != nil {
+	if err := c.requireScope(ctx, req.Scope); err != nil {
 		return err
 	}
 	args := append([]string{"plugin", "install", req.Plugin}, scopeArgs(req.Scope)...)
@@ -139,7 +138,7 @@ func (c *Claude) InstallPlugin(ctx context.Context, req InstallRequest) error {
 }
 
 func (c *Claude) RemovePlugin(ctx context.Context, req RemoveRequest) error {
-	if err := c.requireScope(req.Scope); err != nil {
+	if err := c.requireScope(ctx, req.Scope); err != nil {
 		return err
 	}
 	args := append([]string{"plugin", "uninstall", req.Plugin}, scopeArgs(req.Scope)...)
@@ -159,7 +158,7 @@ func (c *Claude) RemovePlugin(ctx context.Context, req RemoveRequest) error {
 }
 
 func (c *Claude) EnablePlugin(ctx context.Context, req EnableRequest) error {
-	if err := c.requireScope(req.Scope); err != nil {
+	if err := c.requireScope(ctx, req.Scope); err != nil {
 		return err
 	}
 	args := append([]string{"plugin", "enable", req.Plugin}, scopeArgs(req.Scope)...)
@@ -170,7 +169,7 @@ func (c *Claude) EnablePlugin(ctx context.Context, req EnableRequest) error {
 }
 
 func (c *Claude) DisablePlugin(ctx context.Context, req DisableRequest) error {
-	if err := c.requireScope(req.Scope); err != nil {
+	if err := c.requireScope(ctx, req.Scope); err != nil {
 		return err
 	}
 	args := append([]string{"plugin", "disable", req.Plugin}, scopeArgs(req.Scope)...)

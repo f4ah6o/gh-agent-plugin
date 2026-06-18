@@ -85,6 +85,20 @@ func TestCodexListParsesJSON(t *testing.T) {
 	}
 }
 
+func TestClaudeListUnsupported(t *testing.T) {
+	c := NewClaude(&RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}})
+	_, err := c.ListPlugins(context.Background(), ListRequest{})
+	assertCode(t, err, exit.UnsupportedCapability)
+	_, err = c.ListMarketplaces(context.Background())
+	assertCode(t, err, exit.UnsupportedCapability)
+}
+
+func TestCodexListMarketplacesUnsupported(t *testing.T) {
+	c := NewCodex(&RecordingRunner{LookPaths: map[string]string{"codex": "/usr/bin/codex"}})
+	_, err := c.ListMarketplaces(context.Background())
+	assertCode(t, err, exit.UnsupportedCapability)
+}
+
 func TestDetectAbsentBinary(t *testing.T) {
 	c := NewClaude(&RecordingRunner{}) // no LookPaths -> not found
 	d, err := c.Detect(context.Background())

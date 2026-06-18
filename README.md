@@ -41,11 +41,20 @@ Aliases: `add`=`install`, `rm`/`uninstall`=`remove`, `ls`=`list`.
 
 ```bash
 gh agent-plugin install OWNER/REPO PLUGIN --agent claude-code
-gh agent-plugin install OWNER/REPO PLUGIN --ref v1.2.0
 gh agent-plugin install PLUGIN@MARKETPLACE --agent codex
 gh agent-plugin install ./path/to/repo PLUGIN --from-local
 gh agent-plugin preview ./path/to/repo PLUGIN --from-local --json
 ```
+
+### Phase 1 limitations
+
+- `--ref` (pinning a GitHub source to a revision) is **not yet implemented** and
+  is rejected rather than silently installing the default revision (Phase 2).
+- `preview` of a `OWNER/REPO` source requires a local checkout (`--from-local`);
+  remote clone/resolution is Phase 2.
+- `list` and `marketplace list` rely on machine-readable native output. Codex
+  plugins are parsed; Claude Code has no such output yet, so its entries are
+  reported as an explicit unavailable note rather than a silent empty result.
 
 ### Agent selection and scope
 

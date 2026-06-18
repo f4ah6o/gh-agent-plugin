@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
+	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
 	"github.com/f4ah6o/gh-agent-plugin/internal/output"
 	"github.com/f4ah6o/gh-agent-plugin/internal/source"
 )
@@ -33,6 +34,13 @@ func runInstall(args []string, env *Env) error {
 	spec, err := source.Parse(pos, cf.ref, cf.fromLocal)
 	if err != nil {
 		return err
+	}
+	// Pinning a GitHub source to a ref requires resolving and registering that
+	// revision, which depends on the Phase 2 clone/cache path. Rather than
+	// accept --ref and silently install the default branch, reject it.
+	if spec.Ref != "" {
+		return exit.Errorf(exit.UnsupportedCapability,
+			"--ref pinning is not yet supported (Phase 2, issue #4); omit --ref to install the default revision")
 	}
 
 	adapters, err := cf.selectAdapters(env)
@@ -65,31 +73,33 @@ func runInstall(args []string, env *Env) error {
 }
 
 // installOnAgent performs the native install for one agent. For a GitHub source
-// it first registers the repository as a marketplace; if that marketplace was
-// newly added for this install and the install then fails, the registration is
-// rolled back so a failed install leaves no orphaned, unused marketplace
-// (issue #1, "Failure and rollback").
+// it first registers the repository as a marketplace; if (and only if) we can
+// confirm that marketplace did not already exist and the install then fails, the
+// registration is rolled back so a failed install leaves no orphaned, unused
+// marketplace (issue #1, "Failure and rollback").
+//
+// The rollback is deliberately conservative: it never removes a marketplace
+// whose prior existence we cannot confirm, so a failed install can never delete
+// a user's pre-existing marketplace. Confident creation-detection depends on
+// native marketplace listing, which lands in Phase 2; until then rollback only
+// triggers for adapters that can enumerate marketplaces.
 func installOnAgent(ctx context.Context, ad adapter.Adapter, spec source.Spec, selector, regName, regSource string, cf commonFlags) error {
 	rollback := false
 	if regName != "" && !cf.dryRun {
-		existed := marketplaceConfigured(ctx, ad, regName)
+		existed, known := marketplaceConfigured(ctx, ad, regName)
 		if err := ad.AddMarketplace(ctx, adapter.AddMarketplaceRequest{Name: regName, Source: regSource}); err != nil {
 			return err
 		}
-		// We only roll back marketplaces this install introduced. Verifying it
-		// is otherwise unused relies on native marketplace listing, which is
-		// strengthened in Phase 2; until then this is best-effort.
-		rollback = !existed
+		rollback = known && !existed
 	}
 
 	err := ad.InstallPlugin(ctx, adapter.InstallRequest{
-		Plugin:      selector,
-		Marketplace: regName,
-		Scope:       adapter.Scope(cf.scope),
-		Ref:         spec.Ref,
-		DryRun:      cf.dryRun,
-		Force:       cf.force,
-		Yes:         cf.yes,
+		Plugin: selector,
+		Scope:  adapter.Scope(cf.scope),
+		Ref:    spec.Ref,
+		DryRun: cf.dryRun,
+		Force:  cf.force,
+		Yes:    cf.yes,
 	})
 	if err != nil && rollback {
 		_ = ad.RemoveMarketplace(ctx, adapter.RemoveMarketplaceRequest{Name: regName})
@@ -98,19 +108,20 @@ func installOnAgent(ctx context.Context, ad adapter.Adapter, spec source.Spec, s
 }
 
 // marketplaceConfigured reports whether a marketplace named name is already
-// configured for the agent. When the adapter cannot enumerate marketplaces it
-// returns false (treating the marketplace as not-yet-present).
-func marketplaceConfigured(ctx context.Context, ad adapter.Adapter, name string) bool {
+// configured for the agent. The second return value is false when the adapter
+// cannot enumerate marketplaces, in which case the existence is unknown and
+// callers must not assume the marketplace is absent.
+func marketplaceConfigured(ctx context.Context, ad adapter.Adapter, name string) (exists, known bool) {
 	markets, err := ad.ListMarketplaces(ctx)
 	if err != nil {
-		return false
+		return false, false
 	}
 	for _, m := range markets {
 		if m.Name == name {
-			return true
+			return true, true
 		}
 	}
-	return false
+	return false, true
 }
 
 // installSelector renders the selector handed to the native CLI for a source.
