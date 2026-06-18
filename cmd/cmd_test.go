@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -67,14 +68,61 @@ func TestInstall_InterspersedFlagsAfterPositionals(t *testing.T) {
 	if code != exit.OK {
 		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, errOut.String())
 	}
-	if len(r.Calls) == 0 {
-		t.Fatal("expected a native CLI call")
+	// A GitHub source registers the repo as a marketplace, then installs the
+	// plugin via the repo-derived PLUGIN@MARKETPLACE selector.
+	if !calledWith(r, "claude", "plugin marketplace add acme/plugins") {
+		t.Fatalf("expected marketplace registration; calls=%v", r.Calls)
 	}
-	last := r.Calls[len(r.Calls)-1]
-	if last.Name != "claude" || strings.Join(last.Args, " ") != "plugin install formatter" {
-		t.Fatalf("unexpected argv: %s %v", last.Name, last.Args)
+	if !calledWith(r, "claude", "plugin install formatter@plugins") {
+		t.Fatalf("expected native install of formatter@plugins; calls=%v", r.Calls)
 	}
 	_ = out
+}
+
+func TestInstall_GitHubRollbackOnFailure(t *testing.T) {
+	r := &adapter.RecordingRunner{
+		LookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		// Make the native install fail so rollback must kick in.
+		Errs: map[string]error{"claude plugin install formatter@plugins": errors.New("boom")},
+	}
+	env, _, _ := newTestEnv(r)
+	code := Execute([]string{"install", "acme/plugins", "formatter", "--agent", "claude-code"}, env)
+	if code != exit.NativeCLIFailure {
+		t.Fatalf("exit = %d, want %d", code, exit.NativeCLIFailure)
+	}
+	// The marketplace registered for this install must be rolled back.
+	if !calledWith(r, "claude", "plugin marketplace remove plugins") {
+		t.Fatalf("expected marketplace rollback; calls=%v", r.Calls)
+	}
+}
+
+func TestInstall_MarketplaceSelectorNoRegistration(t *testing.T) {
+	r := &adapter.RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
+	env, _, errOut := newTestEnv(r)
+	code := Execute([]string{"install", "formatter@company", "--agent", "claude-code"}, env)
+	if code != exit.OK {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	// A configured-marketplace selector installs verbatim and registers nothing.
+	if !calledWith(r, "claude", "plugin install formatter@company") {
+		t.Fatalf("expected verbatim install; calls=%v", r.Calls)
+	}
+	for _, c := range r.Calls {
+		if c.Name == "claude" && strings.HasPrefix(strings.Join(c.Args, " "), "plugin marketplace add") {
+			t.Fatalf("did not expect a marketplace registration; calls=%v", r.Calls)
+		}
+	}
+}
+
+// calledWith reports whether the runner recorded a call to name with exactly
+// the given space-joined args.
+func calledWith(r *adapter.RecordingRunner, name, args string) bool {
+	for _, c := range r.Calls {
+		if c.Name == name && strings.Join(c.Args, " ") == args {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPreview_LocalSample(t *testing.T) {

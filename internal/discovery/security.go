@@ -7,13 +7,28 @@ import (
 	"strings"
 )
 
-// Severity classifies a security finding.
+// Severity classifies a security finding. Findings are graded on three levels:
+// informational notices, warnings worth a human's attention, and blocking
+// issues that fail validation (preview exits 5).
 type Severity string
 
 const (
-	SeverityWarn  Severity = "warning"
-	SeverityError Severity = "error"
+	SeverityInfo     Severity = "info"
+	SeverityWarning  Severity = "warning"
+	SeverityBlocking Severity = "blocking"
 )
+
+// severityRank orders severities most-severe first for stable sorting.
+func severityRank(s Severity) int {
+	switch s {
+	case SeverityBlocking:
+		return 0
+	case SeverityWarning:
+		return 1
+	default:
+		return 2
+	}
+}
 
 // Finding is a single static security observation about a plugin.
 type Finding struct {
@@ -44,6 +59,9 @@ func Scan(dp DiscoveredPlugin) []Finding {
 	findings = append(findings, scanSkillDrift(dp)...)
 
 	sort.SliceStable(findings, func(i, j int) bool {
+		if r1, r2 := severityRank(findings[i].Severity), severityRank(findings[j].Severity); r1 != r2 {
+			return r1 < r2
+		}
 		if findings[i].Rule != findings[j].Rule {
 			return findings[i].Rule < findings[j].Rule
 		}
@@ -66,25 +84,25 @@ func scanSymlinksAndScripts(root string) []Finding {
 		}
 		rel, _ := filepath.Rel(root, path)
 		if strings.Contains(rel, ".."+string(filepath.Separator)) || rel == ".." {
-			findings = append(findings, Finding{SeverityError, "path-traversal", "path escapes plugin root", rel})
+			findings = append(findings, Finding{SeverityBlocking, "path-traversal", "path escapes plugin root", rel})
 			return nil
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			if target, err := filepath.EvalSymlinks(path); err == nil {
 				if !withinRoot(absRoot, target) {
-					findings = append(findings, Finding{SeverityError, "symlink-escape", "symlink points outside plugin root: " + target, rel})
+					findings = append(findings, Finding{SeverityBlocking, "symlink-escape", "symlink points outside plugin root: " + target, rel})
 				}
 			} else {
-				findings = append(findings, Finding{SeverityWarn, "symlink-broken", "symlink could not be resolved", rel})
+				findings = append(findings, Finding{SeverityWarning, "symlink-broken", "symlink could not be resolved", rel})
 			}
 			return nil
 		}
 		if !info.IsDir() {
 			ext := strings.ToLower(filepath.Ext(path))
 			if shellHookExts[ext] {
-				findings = append(findings, Finding{SeverityWarn, "executable-script", "executable script present", rel})
+				findings = append(findings, Finding{SeverityWarning, "executable-script", "executable script present", rel})
 			} else if info.Mode()&0111 != 0 && info.Mode().IsRegular() {
-				findings = append(findings, Finding{SeverityWarn, "executable-bit", "file has executable bit set", rel})
+				findings = append(findings, Finding{SeverityInfo, "executable-bit", "file has executable bit set", rel})
 			}
 		}
 		return nil
@@ -103,18 +121,21 @@ func scanMCP(root string) []Finding {
 	cfg := readMCP(mcpPath)
 	for name, srv := range cfg.MCPServers {
 		if srv.Command != "" {
-			findings = append(findings, Finding{SeverityWarn, "mcp-external-process", "MCP server launches external process: " + srv.Command, name})
+			findings = append(findings, Finding{SeverityWarning, "mcp-external-process", "MCP server launches external process: " + srv.Command, name})
 		}
 		if u := srv.URL; u != "" {
-			if strings.HasPrefix(strings.ToLower(u), "http://") {
-				findings = append(findings, Finding{SeverityError, "insecure-url", "MCP server uses http:// URL: " + u, name})
-			} else if !strings.HasPrefix(strings.ToLower(u), "https://") {
-				findings = append(findings, Finding{SeverityWarn, "unknown-url", "MCP server uses non-https URL: " + u, name})
+			switch {
+			case strings.HasPrefix(strings.ToLower(u), "http://"):
+				findings = append(findings, Finding{SeverityBlocking, "insecure-url", "MCP server uses http:// URL: " + u, name})
+			case strings.HasPrefix(strings.ToLower(u), "https://"):
+				findings = append(findings, Finding{SeverityInfo, "external-url", "MCP server references external URL: " + u, name})
+			default:
+				findings = append(findings, Finding{SeverityWarning, "unknown-url", "MCP server uses non-https URL: " + u, name})
 			}
 		}
 		for k := range srv.Env {
 			if looksLikeCredential(k) {
-				findings = append(findings, Finding{SeverityWarn, "credential-env", "MCP server requests credential env var: " + k, name})
+				findings = append(findings, Finding{SeverityWarning, "credential-env", "MCP server requests credential env var: " + k, name})
 			}
 		}
 	}
@@ -135,7 +156,7 @@ func scanHooks(root string) []Finding {
 		}
 		ext := strings.ToLower(filepath.Ext(e.Name()))
 		if shellHookExts[ext] {
-			findings = append(findings, Finding{SeverityWarn, "shell-hook", "hook contains an executable script", filepath.Join("hooks", e.Name())})
+			findings = append(findings, Finding{SeverityWarning, "shell-hook", "hook contains an executable script", filepath.Join("hooks", e.Name())})
 		}
 	}
 	return findings
@@ -148,7 +169,7 @@ func scanSkillDrift(dp DiscoveredPlugin) []Finding {
 	var findings []Finding
 	for _, s := range dp.Skills {
 		if seen[s] {
-			findings = append(findings, Finding{SeverityError, "duplicate-skill", "skill defined more than once: " + s, "skills/" + s})
+			findings = append(findings, Finding{SeverityBlocking, "duplicate-skill", "skill defined more than once: " + s, "skills/" + s})
 		}
 		seen[s] = true
 	}
@@ -160,7 +181,7 @@ func scanSkillDrift(dp DiscoveredPlugin) []Finding {
 			a := filepath.Join(claudeSkills, s, "SKILL.md")
 			b := filepath.Join(codexSkills, s, "SKILL.md")
 			if fileExists(a) && fileExists(b) && !sameFile(a, b) {
-				findings = append(findings, Finding{SeverityWarn, "skill-content-drift", "skill differs between agents: " + s, "skills/" + s})
+				findings = append(findings, Finding{SeverityWarning, "skill-content-drift", "skill differs between agents: " + s, "skills/" + s})
 			}
 		}
 	}

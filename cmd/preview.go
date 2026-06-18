@@ -58,7 +58,7 @@ func runPreview(args []string, env *Env) error {
 		printPreview(env, dp, srcMeta, findings)
 	}
 
-	if n := countErrors(findings); n > 0 {
+	if n := countBlocking(findings); n > 0 {
 		return exit.Errorf(exit.ValidationFailed, "preview found %d blocking security issue(s)", n)
 	}
 	return nil
@@ -105,10 +105,10 @@ func printPreview(env *Env, dp discovery.DiscoveredPlugin, src map[string]string
 	}
 }
 
-func countErrors(findings []discovery.Finding) int {
+func countBlocking(findings []discovery.Finding) int {
 	n := 0
 	for _, f := range findings {
-		if f.Severity == discovery.SeverityError {
+		if f.Severity == discovery.SeverityBlocking {
 			n++
 		}
 	}
