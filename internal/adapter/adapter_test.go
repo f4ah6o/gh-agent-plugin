@@ -85,12 +85,54 @@ func TestCodexListParsesJSON(t *testing.T) {
 	}
 }
 
-func TestClaudeListUnsupported(t *testing.T) {
-	c := NewClaude(&RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}})
-	_, err := c.ListPlugins(context.Background(), ListRequest{})
-	assertCode(t, err, exit.UnsupportedCapability)
-	_, err = c.ListMarketplaces(context.Background())
-	assertCode(t, err, exit.UnsupportedCapability)
+func TestClaudeListParsesJSON(t *testing.T) {
+	r := &RecordingRunner{
+		LookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		Stdout: map[string]string{
+			"claude plugin list --json":             `[{"name":"formatter","marketplace":"company","version":"1.2.0","scope":"user","enabled":true}]`,
+			"claude plugin marketplace list --json": `[{"name":"company","type":"github","url":"github.com/acme/plugins"}]`,
+		},
+	}
+	c := NewClaude(r)
+
+	plugins, err := c.ListPlugins(context.Background(), ListRequest{})
+	if err != nil {
+		t.Fatalf("ListPlugins: %v", err)
+	}
+	if len(plugins) != 1 || plugins[0].ID != "formatter@company" || plugins[0].Agent != "claude-code" || plugins[0].Version != "1.2.0" {
+		t.Fatalf("unexpected plugin: %+v", plugins)
+	}
+
+	markets, err := c.ListMarketplaces(context.Background())
+	if err != nil {
+		t.Fatalf("ListMarketplaces: %v", err)
+	}
+	if len(markets) != 1 || markets[0].Name != "company" {
+		t.Fatalf("unexpected marketplaces: %+v", markets)
+	}
+}
+
+func TestClaudeListEmptyJSON(t *testing.T) {
+	// Empty native output must parse as an empty slice, not an error.
+	c := NewClaude(&RecordingRunner{
+		LookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		Stdout:    map[string]string{"claude plugin list --json": "[]"},
+	})
+	plugins, err := c.ListPlugins(context.Background(), ListRequest{})
+	if err != nil || len(plugins) != 0 {
+		t.Fatalf("expected empty plugins, got %v, err=%v", plugins, err)
+	}
+}
+
+func TestClaudeUpdateUsesUpdateVerb(t *testing.T) {
+	r := &RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
+	c := NewClaude(r)
+	if err := c.UpdatePlugin(context.Background(), UpdateRequest{Plugin: "formatter@company"}); err != nil {
+		t.Fatalf("UpdatePlugin: %v", err)
+	}
+	if got := argvOf(r.Calls[0]); got != "claude plugin update formatter@company" {
+		t.Fatalf("argv = %q", got)
+	}
 }
 
 func TestCodexListMarketplacesUnsupported(t *testing.T) {

@@ -8,9 +8,14 @@ import (
 	"github.com/f4ah6o/gh-agent-plugin/internal/output"
 )
 
-// runUpdate updates plugins. With no plugin selector and --all it updates every
-// plugin; otherwise it updates the named PLUGIN@MARKETPLACE. Marketplace updates
-// are handled by `marketplace update`.
+// runUpdate updates plugins via each agent's native update command. With no
+// plugin selector, --all updates every installed plugin; otherwise it updates
+// the named PLUGIN@MARKETPLACE. Marketplace updates are handled by
+// `marketplace update`.
+//
+// Here --all means "all plugins"; agent fan-out is controlled separately by
+// --agent (and --agent all). With no --agent the command targets every detected
+// agent, like list.
 func runUpdate(args []string, env *Env) error {
 	var cf commonFlags
 	fs := newFlagSet("update", env)
@@ -27,7 +32,7 @@ func runUpdate(args []string, env *Env) error {
 		selector = rest[0]
 	}
 
-	adapters, err := cf.selectAdapters(env)
+	adapters, err := cf.selectTargets(env)
 	if err != nil {
 		return err
 	}
@@ -37,18 +42,14 @@ func runUpdate(args []string, env *Env) error {
 	for _, ad := range adapters {
 		var err error
 		if selector == "" {
-			// "all plugins": enumerate the agent's installed plugins and refresh
-			// each. This keeps "all agents" (--agent all) distinct from "all
-			// plugins" and never issues an empty selector to the native CLI.
+			// "all plugins": enumerate the agent's installed plugins and update
+			// each via the native update command.
 			err = updateAllPlugins(env.Ctx, ad, cf)
 		} else {
-			// A specific plugin update is modeled as a forced reinstall of the
-			// same selector via the native CLI.
-			err = ad.InstallPlugin(env.Ctx, adapter.InstallRequest{
+			err = ad.UpdatePlugin(env.Ctx, adapter.UpdateRequest{
 				Plugin: selector,
 				Scope:  adapter.Scope(cf.scope),
 				DryRun: cf.dryRun,
-				Force:  true,
 			})
 		}
 		res := agentResult{Agent: ad.ID(), Action: "update", OK: err == nil}
@@ -69,21 +70,20 @@ func runUpdate(args []string, env *Env) error {
 	return finalize("update", results, errs)
 }
 
-// updateAllPlugins refreshes every plugin the agent reports as installed. It
-// relies on ListPlugins to enumerate them, so for an agent that cannot
-// enumerate plugins (e.g. Claude Code in Phase 1) it surfaces that adapter's
-// unsupported-capability error rather than guessing.
+// updateAllPlugins updates every plugin the agent reports as installed, using
+// the native per-plugin update command. It relies on ListPlugins to enumerate
+// them, so an agent that cannot enumerate plugins surfaces that adapter's error
+// rather than guessing.
 func updateAllPlugins(ctx context.Context, ad adapter.Adapter, cf commonFlags) error {
 	plugins, err := ad.ListPlugins(ctx, adapter.ListRequest{Scope: adapter.Scope(cf.scope)})
 	if err != nil {
 		return err
 	}
 	for _, p := range plugins {
-		if err := ad.InstallPlugin(ctx, adapter.InstallRequest{
+		if err := ad.UpdatePlugin(ctx, adapter.UpdateRequest{
 			Plugin: p.ID,
 			Scope:  adapter.Scope(cf.scope),
 			DryRun: cf.dryRun,
-			Force:  true,
 		}); err != nil {
 			return err
 		}

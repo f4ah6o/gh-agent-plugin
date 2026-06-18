@@ -169,6 +169,22 @@ func (c *Codex) InstallPlugin(ctx context.Context, req InstallRequest) error {
 	return nil
 }
 
+// UpdatePlugin refreshes a plugin. Codex has no dedicated update verb; its
+// `plugin add` re-fetches the plugin from its marketplace, which is Codex's
+// update path.
+func (c *Codex) UpdatePlugin(ctx context.Context, req UpdateRequest) error {
+	if err := c.rejectScope(req.Scope); err != nil {
+		return err
+	}
+	if req.DryRun {
+		return nil
+	}
+	if _, _, err := c.Runner.Run(ctx, codexBin, "plugin", "add", req.Plugin); err != nil {
+		return nativeErr(c.ID(), err)
+	}
+	return nil
+}
+
 func (c *Codex) RemovePlugin(ctx context.Context, req RemoveRequest) error {
 	if err := c.rejectScope(req.Scope); err != nil {
 		return err

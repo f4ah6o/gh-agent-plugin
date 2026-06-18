@@ -110,9 +110,16 @@ type DisableRequest struct {
 	Scope  Scope
 }
 
+// UpdateRequest updates a single installed plugin to its latest version.
+type UpdateRequest struct {
+	Plugin string
+	Scope  Scope
+	DryRun bool
+}
+
 type AddMarketplaceRequest struct {
-	Name   string
-	Source string // OWNER/REPO, URL, or local path
+	Source string // OWNER/REPO, URL, or local path; the marketplace name is
+	// declared by the source's manifest, so it is not supplied here.
 	Local  bool
 	DryRun bool
 }
@@ -140,6 +147,7 @@ type Adapter interface {
 
 	ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, error)
 	InstallPlugin(ctx context.Context, req InstallRequest) error
+	UpdatePlugin(ctx context.Context, req UpdateRequest) error
 	RemovePlugin(ctx context.Context, req RemoveRequest) error
 	EnablePlugin(ctx context.Context, req EnableRequest) error
 	DisablePlugin(ctx context.Context, req DisableRequest) error

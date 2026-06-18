@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
+	"sort"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
@@ -49,11 +49,11 @@ func runInstall(args []string, env *Env) error {
 	}
 
 	selector := installSelector(spec)
-	regName, regSource := installRegistration(spec)
+	regSource, regLocal := installRegistration(spec)
 	results := make([]agentResult, 0, len(adapters))
 	errs := make([]error, 0, len(adapters))
 	for _, ad := range adapters {
-		if err := installOnAgent(env.Ctx, ad, spec, selector, regName, regSource, cf); err != nil {
+		if err := installOnAgent(env.Ctx, ad, selector, regSource, regLocal, cf); err != nil {
 			results = append(results, agentResult{Agent: ad.ID(), Action: "install", OK: false, Error: err.Error()})
 			errs = append(errs, err)
 			continue
@@ -72,91 +72,109 @@ func runInstall(args []string, env *Env) error {
 	return finalize("install", results, errs)
 }
 
-// installOnAgent performs the native install for one agent. For a GitHub source
-// it first registers the repository as a marketplace; if (and only if) we can
-// confirm that marketplace did not already exist and the install then fails, the
-// registration is rolled back so a failed install leaves no orphaned, unused
-// marketplace (issue #1, "Failure and rollback").
+// installOnAgent installs one plugin on one agent. For a GitHub or local source
+// it first registers that source as a marketplace (the native CLI derives the
+// marketplace name from the source's manifest), then installs the bare plugin
+// name, letting the native CLI resolve it across the configured marketplaces.
+// A PLUGIN@MARKETPLACE selector is installed verbatim and registers nothing.
 //
-// The rollback is deliberately conservative: it never removes a marketplace
-// whose prior existence we cannot confirm, so a failed install can never delete
-// a user's pre-existing marketplace. Confident creation-detection depends on
-// native marketplace listing, which lands in Phase 2; until then rollback only
-// triggers for adapters that can enumerate marketplaces.
-func installOnAgent(ctx context.Context, ad adapter.Adapter, spec source.Spec, selector, regName, regSource string, cf commonFlags) error {
-	rollback := false
-	if regName != "" && !cf.dryRun {
-		existed, known := marketplaceConfigured(ctx, ad, regName)
-		if err := ad.AddMarketplace(ctx, adapter.AddMarketplaceRequest{Name: regName, Source: regSource}); err != nil {
+// Rollback (issue #1, "Failure and rollback") is driven by observing which
+// marketplaces this call actually created: the marketplace set is snapshotted
+// before and after AddMarketplace, and only the newly-created entries are
+// removed if the install then fails. Because the names come from the native
+// listing rather than a guess, a failed install can never delete a user's
+// pre-existing marketplace, and when an agent cannot enumerate marketplaces
+// nothing is rolled back.
+func installOnAgent(ctx context.Context, ad adapter.Adapter, selector, regSource string, regLocal bool, cf commonFlags) error {
+	var created []string
+	if regSource != "" && !cf.dryRun {
+		added, err := registerSourceMarketplace(ctx, ad, regSource, regLocal)
+		if err != nil {
 			return err
 		}
-		rollback = known && !existed
+		created = added
 	}
 
 	err := ad.InstallPlugin(ctx, adapter.InstallRequest{
 		Plugin: selector,
 		Scope:  adapter.Scope(cf.scope),
-		Ref:    spec.Ref,
 		DryRun: cf.dryRun,
 		Force:  cf.force,
 		Yes:    cf.yes,
 	})
-	if err != nil && rollback {
-		_ = ad.RemoveMarketplace(ctx, adapter.RemoveMarketplaceRequest{Name: regName})
+	if err != nil {
+		for _, name := range created {
+			_ = ad.RemoveMarketplace(ctx, adapter.RemoveMarketplaceRequest{Name: name})
+		}
 	}
 	return err
 }
 
-// marketplaceConfigured reports whether a marketplace named name is already
-// configured for the agent. The second return value is false when the adapter
-// cannot enumerate marketplaces, in which case the existence is unknown and
-// callers must not assume the marketplace is absent.
-func marketplaceConfigured(ctx context.Context, ad adapter.Adapter, name string) (exists, known bool) {
-	markets, err := ad.ListMarketplaces(ctx)
-	if err != nil {
-		return false, false
+// registerSourceMarketplace adds source as a marketplace and returns the names
+// of marketplaces that this call newly created (for rollback). When the agent
+// cannot enumerate marketplaces the created set is empty, so a later failure
+// rolls back nothing.
+func registerSourceMarketplace(ctx context.Context, ad adapter.Adapter, source string, local bool) ([]string, error) {
+	before, beforeOK := marketplaceNameSet(ctx, ad)
+	if err := ad.AddMarketplace(ctx, adapter.AddMarketplaceRequest{Source: source, Local: local}); err != nil {
+		return nil, err
 	}
-	for _, m := range markets {
-		if m.Name == name {
-			return true, true
+	if !beforeOK {
+		return nil, nil
+	}
+	after, afterOK := marketplaceNameSet(ctx, ad)
+	if !afterOK {
+		return nil, nil
+	}
+	var created []string
+	for name := range after {
+		if !before[name] {
+			created = append(created, name)
 		}
 	}
-	return false, true
+	sort.Strings(created)
+	return created, nil
 }
 
-// installSelector renders the selector handed to the native CLI for a source.
+// marketplaceNameSet returns the set of configured marketplace names for the
+// agent. ok is false when the agent cannot enumerate marketplaces.
+func marketplaceNameSet(ctx context.Context, ad adapter.Adapter) (set map[string]bool, ok bool) {
+	markets, err := ad.ListMarketplaces(ctx)
+	if err != nil {
+		return nil, false
+	}
+	set = make(map[string]bool, len(markets))
+	for _, m := range markets {
+		set[m.Name] = true
+	}
+	return set, true
+}
+
+// installSelector renders the selector handed to the native CLI.
 //   - PLUGIN@MARKETPLACE selector: used verbatim.
-//   - GitHub OWNER/REPO: PLUGIN@<repo-derived marketplace>.
-//   - local: the bare plugin name.
+//   - GitHub or local source: the bare plugin name, resolved by the native CLI
+//     against the marketplace registered from the source. The marketplace name
+//     is never guessed from the repo/path.
 func installSelector(spec source.Spec) string {
-	switch spec.Kind {
-	case source.KindMarketplace:
+	if spec.Kind == source.KindMarketplace {
 		return spec.Plugin + "@" + spec.Marketplace
+	}
+	return spec.Plugin
+}
+
+// installRegistration returns the marketplace source to register for this
+// install (and whether it is a local path), or ("", false) when none is needed.
+// GitHub and local sources are registered; a PLUGIN@MARKETPLACE selector assumes
+// the marketplace already exists.
+func installRegistration(spec source.Spec) (regSource string, local bool) {
+	switch spec.Kind {
 	case source.KindGitHub:
-		return spec.Plugin + "@" + deriveMarketplace(spec.Repository)
+		return spec.Repository, false
+	case source.KindLocal:
+		return spec.Path, true
 	default:
-		return spec.Plugin
+		return "", false
 	}
-}
-
-// installRegistration returns the marketplace (name, source) that must be
-// registered for this install, or ("","") when none is needed. Only GitHub
-// sources introduce a new marketplace; a PLUGIN@MARKETPLACE selector assumes the
-// marketplace is already configured.
-func installRegistration(spec source.Spec) (name, repoSource string) {
-	if spec.Kind == source.KindGitHub {
-		return deriveMarketplace(spec.Repository), spec.Repository
-	}
-	return "", ""
-}
-
-// deriveMarketplace derives a marketplace name from an OWNER/REPO slug (the repo
-// segment).
-func deriveMarketplace(repository string) string {
-	if i := strings.LastIndex(repository, "/"); i >= 0 {
-		return repository[i+1:]
-	}
-	return repository
 }
 
 func printResults(env *Env, results []agentResult) {

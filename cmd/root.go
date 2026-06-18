@@ -178,17 +178,31 @@ func parseArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// wantsAll reports whether the user asked to target every detected agent.
+// wantsAll reports whether the user asked to target every detected agent. Agent
+// fan-out is requested only via `--agent all`; the bare `--all` flag is
+// command-specific (e.g. "all plugins" for update) and must not widen the agent
+// set, so it is intentionally not consulted here.
 func (c *commonFlags) wantsAll() bool {
-	if c.all {
-		return true
-	}
 	for _, a := range c.agents {
 		if a == "all" {
 			return true
 		}
 	}
 	return false
+}
+
+// selectTargets resolves the agents a fan-out command should act on, defaulting
+// to every detected agent when no --agent is given (like list), instead of
+// requiring a selection. Explicit --agent values are honored via selectAdapters.
+func (c *commonFlags) selectTargets(env *Env) ([]adapter.Adapter, error) {
+	if len(c.agents) == 0 {
+		installed := env.Reg.Installed(env.Ctx)
+		if len(installed) == 0 {
+			return nil, exit.Errorf(exit.AgentNotInstalled, "no supported agent CLI detected")
+		}
+		return installed, nil
+	}
+	return c.selectAdapters(env)
 }
 
 // selectAdapters resolves which adapters a command should act on, applying the

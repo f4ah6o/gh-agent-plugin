@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
@@ -44,7 +45,7 @@ func (*Claude) Capabilities(ctx context.Context) (Capabilities, error) {
 		EnableDisable:     true,
 		MarketplaceUpdate: true,
 		DependencyPrune:   true,
-		JSONOutput:        false,
+		JSONOutput:        true,
 		LocalMarketplace:  true,
 		GitMarketplace:    true,
 	}, nil
@@ -69,12 +70,37 @@ func scopeArgs(s Scope) []string {
 	return []string{"--scope", string(s)}
 }
 
+// claudeMarketplaceJSON is a tolerant view of an entry from
+// `claude plugin marketplace list --json`. Unknown fields are ignored.
+type claudeMarketplaceJSON struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+	URL    string `json:"url"`
+	Type   string `json:"type"`
+}
+
 func (c *Claude) ListMarketplaces(ctx context.Context) ([]Marketplace, error) {
-	// Claude Code has no machine-readable marketplace listing, so rather than
-	// returning a misleading empty-but-successful result we surface the
-	// limitation explicitly. Structured parsing is tracked for Phase 2.
-	return nil, exit.Errorf(exit.UnsupportedCapability,
-		"agent %s cannot enumerate marketplaces (no machine-readable output; Phase 2)", c.ID())
+	out, _, err := c.Runner.Run(ctx, claudeBin, "plugin", "marketplace", "list", "--json")
+	if err != nil {
+		return nil, nativeErr(c.ID(), err)
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" || trimmed == "[]" {
+		return nil, nil
+	}
+	var raw []claudeMarketplaceJSON
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+		return nil, exit.Errorf(exit.NativeCLIFailure, "agent %s returned unparseable marketplace JSON: %v", c.ID(), err)
+	}
+	markets := make([]Marketplace, 0, len(raw))
+	for _, m := range raw {
+		url := m.URL
+		if url == "" {
+			url = m.Source
+		}
+		markets = append(markets, Marketplace{Agent: c.ID(), Name: m.Name, Type: m.Type, URL: url})
+	}
+	return markets, nil
 }
 
 func (c *Claude) AddMarketplace(ctx context.Context, req AddMarketplaceRequest) error {
@@ -112,15 +138,87 @@ func (c *Claude) RemoveMarketplace(ctx context.Context, req RemoveMarketplaceReq
 	return nil
 }
 
+// claudePluginJSON is a tolerant view of an entry from
+// `claude plugin list --json`. Unknown fields are ignored.
+type claudePluginJSON struct {
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Marketplace string `json:"marketplace"`
+	Scope       string `json:"scope"`
+	Status      string `json:"status"`
+	Enabled     *bool  `json:"enabled"`
+	Source      struct {
+		Type       string `json:"type"`
+		Repository string `json:"repository"`
+		Repo       string `json:"repo"`
+		Ref        string `json:"ref"`
+		Revision   string `json:"revision"`
+	} `json:"source"`
+}
+
 func (c *Claude) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, error) {
 	if err := c.requireScope(ctx, req.Scope); err != nil {
 		return nil, err
 	}
-	// Claude Code's `plugin list` has no machine-readable form in Phase 1.
-	// Returning an explicit unsupported error keeps a core command honest
-	// instead of silently reporting an empty plugin set. (Phase 2 hardening.)
-	return nil, exit.Errorf(exit.UnsupportedCapability,
-		"agent %s cannot enumerate plugins (no machine-readable output; Phase 2)", c.ID())
+	// `claude plugin list` has no --scope filter, so scope (already validated
+	// above) is not forwarded to the native argv.
+	out, _, err := c.Runner.Run(ctx, claudeBin, "plugin", "list", "--json")
+	if err != nil {
+		return nil, nativeErr(c.ID(), err)
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" || trimmed == "[]" {
+		return nil, nil
+	}
+	var raw []claudePluginJSON
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+		return nil, exit.Errorf(exit.NativeCLIFailure, "agent %s returned unparseable plugin JSON: %v", c.ID(), err)
+	}
+	plugins := make([]Plugin, 0, len(raw))
+	for _, p := range raw {
+		id := p.Name
+		if p.Marketplace != "" {
+			id = p.Name + "@" + p.Marketplace
+		}
+		status := p.Status
+		if status == "" {
+			status = "installed"
+		}
+		enabled := true
+		if p.Enabled != nil {
+			enabled = *p.Enabled
+		}
+		repo := p.Source.Repository
+		if repo == "" {
+			repo = p.Source.Repo
+		}
+		plugins = append(plugins, Plugin{
+			Agent:       c.ID(),
+			ID:          id,
+			Name:        p.Name,
+			Marketplace: p.Marketplace,
+			Status:      status,
+			Enabled:     enabled,
+			Version:     p.Version,
+			Scope:       Scope(p.Scope),
+			Source:      Source{Type: p.Source.Type, Repository: repo, Ref: p.Source.Ref, Revision: p.Source.Revision},
+		})
+	}
+	return plugins, nil
+}
+
+func (c *Claude) UpdatePlugin(ctx context.Context, req UpdateRequest) error {
+	if err := c.requireScope(ctx, req.Scope); err != nil {
+		return err
+	}
+	args := append([]string{"plugin", "update", req.Plugin}, scopeArgs(req.Scope)...)
+	if req.DryRun {
+		return nil
+	}
+	if _, _, err := c.Runner.Run(ctx, claudeBin, args...); err != nil {
+		return nativeErr(c.ID(), err)
+	}
+	return nil
 }
 
 func (c *Claude) InstallPlugin(ctx context.Context, req InstallRequest) error {

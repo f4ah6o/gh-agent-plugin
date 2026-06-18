@@ -37,10 +37,10 @@ func marketplaceAdd(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
-	if len(rest) < 2 {
-		return exit.Errorf(exit.InvalidArguments, "usage: marketplace add NAME SOURCE")
+	if len(rest) < 1 {
+		return exit.Errorf(exit.InvalidArguments, "usage: marketplace add SOURCE (OWNER/REPO, URL, or local path)")
 	}
-	name, src := rest[0], rest[1]
+	src := rest[0]
 	adapters, err := cf.selectAdapters(env)
 	if err != nil {
 		return err
@@ -48,7 +48,7 @@ func marketplaceAdd(args []string, env *Env) error {
 	results := make([]agentResult, 0, len(adapters))
 	errs := make([]error, 0, len(adapters))
 	for _, ad := range adapters {
-		err := ad.AddMarketplace(env.Ctx, adapter.AddMarketplaceRequest{Name: name, Source: src, Local: cf.fromLocal, DryRun: cf.dryRun})
+		err := ad.AddMarketplace(env.Ctx, adapter.AddMarketplaceRequest{Source: src, Local: cf.fromLocal, DryRun: cf.dryRun})
 		res := agentResult{Agent: ad.ID(), Action: "marketplace add", OK: err == nil}
 		if err != nil {
 			res.Error = err.Error()
@@ -67,7 +67,7 @@ func marketplaceList(args []string, env *Env) error {
 		return err
 	}
 	adapters := env.Reg.Installed(env.Ctx)
-	if len(cf.agents) > 0 || cf.all {
+	if len(cf.agents) > 0 {
 		sel, err := cf.selectAdapters(env)
 		if err != nil {
 			return err

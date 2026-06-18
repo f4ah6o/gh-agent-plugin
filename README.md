@@ -52,9 +52,10 @@ gh agent-plugin preview ./path/to/repo PLUGIN --from-local --json
   is rejected rather than silently installing the default revision (Phase 2).
 - `preview` of a `OWNER/REPO` source requires a local checkout (`--from-local`);
   remote clone/resolution is Phase 2.
-- `list` and `marketplace list` rely on machine-readable native output. Codex
-  plugins are parsed; Claude Code has no such output yet, so its entries are
-  reported as an explicit unavailable note rather than a silent empty result.
+- `list` parses native JSON for both Claude Code and Codex. `marketplace list`
+  parses Claude Code's `--json`; Codex exposes no machine-readable marketplace
+  listing yet, so that case is reported as an explicit note rather than a silent
+  empty result.
 
 ### Agent selection and scope
 

@@ -20,7 +20,7 @@ func runList(args []string, env *Env) error {
 
 	// list defaults to all detected agents rather than requiring a selection.
 	var adapters []adapter.Adapter
-	if len(cf.agents) == 0 && !cf.all {
+	if len(cf.agents) == 0 {
 		adapters = env.Reg.Installed(env.Ctx)
 	} else {
 		sel, err := cf.selectAdapters(env)
