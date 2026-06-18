@@ -11,6 +11,8 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -88,18 +90,24 @@ func (c *Cache) Checkout(ctx context.Context, repo, ref string) (dir string, rev
 	return dir, strings.TrimSpace(rev), nil
 }
 
-// checkoutDir is the deterministic on-disk location for a repo@ref checkout.
+// checkoutDir is the deterministic on-disk location for a repo@ref checkout. The
+// final path element combines a display-safe rendering of the ref with a digest
+// of the raw ref, so distinct refs that sanitize to the same display string
+// (e.g. "release/1.x" vs "release-1.x") never share a directory.
 func (c *Cache) checkoutDir(repo, ref string) string {
 	parts := strings.SplitN(repo, "/", 2)
-	refKey := ref
-	if refKey == "" {
-		refKey = "HEAD"
+	display := ref
+	if display == "" {
+		display = "HEAD"
 	}
-	return filepath.Join(c.Root, "sources", parts[0], parts[1], sanitizeRef(refKey))
+	sum := sha256.Sum256([]byte(ref))
+	element := sanitizeRef(display) + "-" + hex.EncodeToString(sum[:])[:12]
+	return filepath.Join(c.Root, "sources", parts[0], parts[1], element)
 }
 
 // sanitizeRef makes a ref safe to use as a single path element (refs may contain
-// slashes, e.g. "release/1.x").
+// slashes, e.g. "release/1.x"). Collision-resistance is provided by the digest
+// suffix in checkoutDir, so this only needs to keep the path element readable.
 func sanitizeRef(ref string) string {
 	return strings.NewReplacer("/", "-", string(filepath.Separator), "-").Replace(ref)
 }
