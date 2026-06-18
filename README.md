@@ -48,10 +48,14 @@ gh agent-plugin preview ./path/to/repo PLUGIN --from-local --json
 
 ### Phase 1 limitations
 
-- `--ref` (pinning a GitHub source to a revision) is **not yet implemented** and
-  is rejected rather than silently installing the default revision (Phase 2).
-- `preview` of a `OWNER/REPO` source requires a local checkout (`--from-local`);
-  remote clone/resolution is Phase 2.
+- `--ref` (pinning a GitHub source to a revision) is honored by `preview`, which
+  fetches the requested branch, tag, or commit SHA and records the resolved
+  revision. `install` still rejects `--ref` until the native install path can pin
+  a revision (Phase 2).
+- `preview` of a `OWNER/REPO` source clones the repo into a regenerable cache
+  under `~/.cache/gh-agent-plugin/` and discovers it there; `--from-local` is no
+  longer required. `install` of a remote source is still delegated to the native
+  CLI's own resolution.
 - `list` parses native JSON for both Claude Code and Codex. `marketplace list`
   parses Claude Code's `--json`; Codex exposes no machine-readable marketplace
   listing yet, so that case is reported as an explicit note rather than a silent

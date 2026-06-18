@@ -37,7 +37,7 @@ func runPreview(args []string, env *Env) error {
 		return err
 	}
 
-	repoRoot, srcMeta, err := resolveRepoRoot(spec)
+	repoRoot, srcMeta, err := resolveRepoRoot(env, spec)
 	if err != nil {
 		return err
 	}
@@ -67,18 +67,32 @@ func runPreview(args []string, env *Env) error {
 }
 
 // resolveRepoRoot resolves a source spec to a local repository root for static
-// discovery. Local sources are used as-is; GitHub/marketplace sources require
-// network resolution which is deferred to the install path, so preview of those
-// is reported as unsupported in this phase unless a local path is given.
-func resolveRepoRoot(spec source.Spec) (string, map[string]string, error) {
+// discovery. Local sources are used as-is; a GitHub source is cloned into the
+// regenerable cache (issue #4, Phase 2) and the resolved revision is recorded in
+// the returned metadata. A marketplace selector has no local files to inspect,
+// so previewing it remains unsupported.
+func resolveRepoRoot(env *Env, spec source.Spec) (string, map[string]string, error) {
 	switch spec.Kind {
 	case source.KindLocal:
 		return spec.Path, map[string]string{"type": "local", "path": spec.Path}, nil
 	case source.KindGitHub:
-		// Phase 1 previews operate on a local checkout. A full implementation
-		// would clone spec.Repository@spec.Ref into the cache first.
-		return "", nil, exit.Errorf(exit.GeneralError,
-			"previewing a GitHub source requires a local checkout in this phase; use --from-local with a cloned path")
+		if env.Cache == nil {
+			return "", nil, exit.Errorf(exit.GeneralError, "source cache is unavailable; cannot resolve a GitHub source")
+		}
+		dir, revision, err := env.Cache.Checkout(env.Ctx, spec.Repository, spec.Ref)
+		if err != nil {
+			return "", nil, err
+		}
+		meta := map[string]string{
+			"type":       "github",
+			"repository": spec.Repository,
+			"path":       dir,
+			"revision":   revision,
+		}
+		if spec.Ref != "" {
+			meta["ref"] = spec.Ref
+		}
+		return dir, meta, nil
 	default:
 		// PLUGIN@MARKETPLACE is valid syntax but previewing a configured
 		// marketplace source is not supported yet (it has no local files to
@@ -93,7 +107,7 @@ func printPreview(env *Env, dp discovery.DiscoveredPlugin, src map[string]string
 	fmt.Fprintf(w, "Plugin:           %s\n", dp.Name)
 	fmt.Fprintf(w, "Root:             %s\n", dp.Root)
 	fmt.Fprintf(w, "Supported agents: %s\n", join(dp.Agents))
-	fmt.Fprintf(w, "Source:           %s %s\n", src["type"], src["path"])
+	fmt.Fprintf(w, "Source:           %s\n", sourceLine(src))
 	fmt.Fprintf(w, "Manifests:        %s\n", joinMap(dp.Manifests))
 	fmt.Fprintf(w, "Skills:           %s\n", join(dp.Skills))
 	fmt.Fprintf(w, "Commands:         %s\n", join(dp.Commands))
@@ -109,6 +123,34 @@ func printPreview(env *Env, dp discovery.DiscoveredPlugin, src map[string]string
 	for _, f := range findings {
 		fmt.Fprintf(w, "  [%s] %s: %s (%s)\n", f.Severity, f.Rule, f.Detail, f.Path)
 	}
+}
+
+// sourceLine renders the human-readable source description from preview
+// metadata, including the resolved revision for a GitHub source.
+func sourceLine(src map[string]string) string {
+	switch src["type"] {
+	case "github":
+		s := "github " + src["repository"]
+		if ref := src["ref"]; ref != "" {
+			s += "@" + ref
+		}
+		if rev := src["revision"]; rev != "" {
+			s += " (" + shortRev(rev) + ")"
+		}
+		return s
+	case "local":
+		return "local " + src["path"]
+	default:
+		return src["type"] + " " + src["path"]
+	}
+}
+
+// shortRev abbreviates a commit SHA for display, leaving non-SHA values intact.
+func shortRev(rev string) string {
+	if len(rev) > 12 {
+		return rev[:12]
+	}
+	return rev
 }
 
 func countBlocking(findings []discovery.Finding) int {
