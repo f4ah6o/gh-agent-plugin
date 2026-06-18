@@ -1,0 +1,6 @@
+{
+  "name": "sample",
+  "plugins": [
+    { "name": "example", "source": "./plugins/example" }
+  ]
+}

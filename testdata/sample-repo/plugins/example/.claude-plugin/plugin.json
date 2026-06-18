@@ -1,0 +1,5 @@
+{
+  "name": "example",
+  "version": "1.2.0",
+  "description": "Sample dual-target plugin used for discovery and preview tests."
+}
