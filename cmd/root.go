@@ -58,12 +58,12 @@ var commands = map[string]commandFunc{
 }
 
 // Main is the process entry point. It builds a production Env and returns the
-// exit code.
+// exit code. The context is left deadline-free here so that applyTimeout (called
+// early in each command) can set either --timeout or the defaultTimeout without
+// the flag being capped by a pre-existing parent deadline.
 func Main(args []string) int {
-	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-	defer cancel()
 	env := &Env{
-		Ctx:    ctx,
+		Ctx:    context.Background(),
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		Reg:    adapter.NewRegistry(adapter.ExecRunner{}),
@@ -169,14 +169,17 @@ func (c *commonFlags) register(fs *flag.FlagSet) {
 	fs.DurationVar(&c.timeout, "timeout", 0, "override the default operation timeout (e.g. 30s, 2m)")
 }
 
-// applyTimeout derives a new context with the requested timeout, replacing
-// env.Ctx. The returned cancel function must be deferred by the caller. If no
-// timeout was requested the original context is kept and the cancel is a no-op.
+// applyTimeout derives a new context with the effective timeout, replacing
+// env.Ctx, and returns a cancel function the caller must defer. It always
+// applies a deadline: --timeout if given, otherwise defaultTimeout. Because
+// Main leaves env.Ctx deadline-free, this is the only place a deadline is set,
+// so --timeout can genuinely override (not merely shorten) the default.
 func (c *commonFlags) applyTimeout(env *Env) func() {
-	if c.timeout <= 0 {
-		return func() {}
+	d := c.timeout
+	if d <= 0 {
+		d = defaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(env.Ctx, c.timeout)
+	ctx, cancel := context.WithTimeout(env.Ctx, d)
 	env.Ctx = ctx
 	return cancel
 }

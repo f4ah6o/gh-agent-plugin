@@ -16,6 +16,7 @@ type fakeGit struct {
 	revision string
 	files    map[string]string // relative path -> contents written on clone
 	cloneErr error
+	fetchErr error
 }
 
 func (g *fakeGit) Clone(_ context.Context, _ /*repoURL*/, ref, dir string) error {
@@ -49,7 +50,7 @@ func (g *fakeGit) Revision(context.Context, string) (string, error) {
 
 func (g *fakeGit) Fetch(_ context.Context, _ string) error {
 	g.fetches++
-	return nil
+	return g.fetchErr
 }
 
 func TestCheckout_ClonesAndResolvesRevision(t *testing.T) {
@@ -113,6 +114,22 @@ func TestCheckout_InvalidRepo(t *testing.T) {
 	c := &Cache{Root: t.TempDir(), Git: &fakeGit{}}
 	if _, _, err := c.Checkout(context.Background(), "not-a-repo", ""); err == nil {
 		t.Fatal("expected error for invalid repository")
+	}
+}
+
+func TestCheckout_DefaultBranch_FetchErrorPropagates(t *testing.T) {
+	fetchErr := context.DeadlineExceeded // any non-UnsupportedCapability error
+	g := &fakeGit{fetchErr: fetchErr}
+	c := &Cache{Root: t.TempDir(), Git: g}
+	ctx := context.Background()
+
+	if _, _, err := c.Checkout(ctx, "acme/plugins", ""); err != nil {
+		t.Fatalf("initial clone: %v", err)
+	}
+	// Second call triggers Fetch; the error must propagate, not be swallowed.
+	_, _, err := c.Checkout(ctx, "acme/plugins", "")
+	if err == nil {
+		t.Fatal("expected Checkout to fail when Fetch fails, got nil")
 	}
 }
 

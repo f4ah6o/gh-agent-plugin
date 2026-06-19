@@ -68,10 +68,15 @@ func (c *Cache) Checkout(ctx context.Context, repo, ref string) (dir string, rev
 	dir = c.checkoutDir(repo, ref)
 	if isGitCheckout(dir) {
 		if ref == "" {
-			// Default branch: refresh so callers see current content, not a
-			// potentially stale clone. Errors here are non-fatal; the caller gets
-			// the existing checkout with a stale warning in the revision.
-			_ = c.Git.Fetch(ctx, dir)
+			// Default branch: refresh so callers see current content. Fetch
+			// errors are propagated so that a network failure produces an explicit
+			// error rather than a silently stale result. Use --no-cache (which
+			// calls InvalidateCheckout before Checkout) only to force a full
+			// re-clone; a specific --ref avoids the fetch entirely.
+			if err := c.Git.Fetch(ctx, dir); err != nil {
+				return "", "", exit.Errorf(exit.NativeCLIFailure,
+					"git fetch for %s failed: %v (use --no-cache to re-clone or pin a --ref to skip fetch)", repo, err)
+			}
 		}
 		// Immutable ref (tag/commit): reuse without fetching.
 	} else {

@@ -156,17 +156,26 @@ func installOnAgent(ctx context.Context, ad adapter.Adapter, selector, regSource
 // is returned. When the diff is empty (marketplace was already registered), URL
 // matching against the after listing is attempted so re-installs still qualify.
 func registerSourceMarketplace(ctx context.Context, ad adapter.Adapter, src string, local bool) (name string, created []string, canEnum bool, err error) {
-	before, beforeCanEnum := snapshotMarketplaces(ctx, ad)
-	if err := ad.AddMarketplace(ctx, adapter.AddMarketplaceRequest{Source: src, Local: local}); err != nil {
-		return "", nil, beforeCanEnum, err
+	before, beforeCanEnum, err := snapshotMarketplaces(ctx, ad)
+	if err != nil {
+		return "", nil, true, err
+	}
+	if addErr := ad.AddMarketplace(ctx, adapter.AddMarketplaceRequest{Source: src, Local: local}); addErr != nil {
+		return "", nil, beforeCanEnum, addErr
 	}
 	if !beforeCanEnum {
 		return "", nil, false, nil
 	}
 
-	after, afterCanEnum := snapshotMarketplaces(ctx, ad)
+	after, afterCanEnum, err := snapshotMarketplaces(ctx, ad)
+	if err != nil {
+		return "", nil, true, err
+	}
 	if !afterCanEnum {
-		return "", nil, true, nil
+		// Should not happen (before succeeded), but propagate as a hard failure
+		// rather than falling back to bare-name resolution.
+		return "", nil, true, exit.Errorf(exit.NativeCLIFailure,
+			"marketplace listing succeeded before AddMarketplace but failed after; cannot determine marketplace name")
 	}
 
 	beforeSet := toMarketplaceNameSet(before)
@@ -186,15 +195,21 @@ func registerSourceMarketplace(ctx context.Context, ad adapter.Adapter, src stri
 	return marketplaceMatchSource(after, src), created, true, nil
 }
 
-// snapshotMarketplaces lists the agent's configured marketplaces. canEnum is
-// false only when the agent does not support enumeration (UnsupportedCapability
-// or any other error from ListMarketplaces).
-func snapshotMarketplaces(ctx context.Context, ad adapter.Adapter) (markets []adapter.Marketplace, canEnum bool) {
-	m, err := ad.ListMarketplaces(ctx)
-	if err != nil {
-		return nil, false
+// snapshotMarketplaces lists the agent's configured marketplaces.
+// canEnum is false only when the agent explicitly does not support enumeration
+// (UnsupportedCapability). Any other error — network failure, parse error,
+// context cancellation — is returned so the caller can abort rather than
+// silently falling back to bare-name resolution and reintroducing the
+// marketplace-collision risk.
+func snapshotMarketplaces(ctx context.Context, ad adapter.Adapter) (markets []adapter.Marketplace, canEnum bool, err error) {
+	m, e := ad.ListMarketplaces(ctx)
+	if e != nil {
+		if exit.CodeOf(e) == exit.UnsupportedCapability {
+			return nil, false, nil
+		}
+		return nil, true, e
 	}
-	return m, true
+	return m, true, nil
 }
 
 // toMarketplaceNameSet builds a set of marketplace names for O(1) lookup.
