@@ -24,6 +24,9 @@ func runUpdate(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	cancel := cf.applyTimeout(env)
+	defer cancel()
+	cf.warnReservedFlags(env)
 	if len(rest) == 0 && !cf.all {
 		return exit.Errorf(exit.InvalidArguments, "specify a plugin selector or --all")
 	}

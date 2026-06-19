@@ -29,6 +29,9 @@ type Git interface {
 	Clone(ctx context.Context, repoURL, ref, dir string) error
 	// Revision resolves the checked-out commit SHA of the repository in dir.
 	Revision(ctx context.Context, dir string) (string, error)
+	// Fetch updates dir to the latest remote default branch HEAD. It is used to
+	// refresh existing checkouts of the default branch (empty ref).
+	Fetch(ctx context.Context, dir string) error
 }
 
 // Cache resolves GitHub sources into local checkouts rooted at Root.
@@ -55,14 +58,28 @@ func New(root string, git Git) (*Cache, error) {
 
 // Checkout ensures OWNER/REPO@ref is present locally and returns the checkout
 // directory and the resolved commit revision. An empty ref selects the default
-// branch. A checkout already present in the cache is reused (the cache is
-// regenerable, so a stale reuse is corrected by deleting the cache root).
+// branch. An existing checkout for a non-empty (immutable) ref is reused;
+// an existing default-branch checkout is refreshed via Fetch so preview shows
+// current content. Use InvalidateCheckout to force a full re-clone.
 func (c *Cache) Checkout(ctx context.Context, repo, ref string) (dir string, revision string, err error) {
 	if !validRepo(repo) {
 		return "", "", exit.Errorf(exit.InvalidArguments, "invalid repository %q, expected OWNER/REPO", repo)
 	}
 	dir = c.checkoutDir(repo, ref)
-	if !isGitCheckout(dir) {
+	if isGitCheckout(dir) {
+		if ref == "" {
+			// Default branch: refresh so callers see current content. Fetch
+			// errors are propagated so that a network failure produces an explicit
+			// error rather than a silently stale result. Use --no-cache (which
+			// calls InvalidateCheckout before Checkout) only to force a full
+			// re-clone; a specific --ref avoids the fetch entirely.
+			if err := c.Git.Fetch(ctx, dir); err != nil {
+				return "", "", exit.Errorf(exit.NativeCLIFailure,
+					"git fetch for %s failed: %v (use --no-cache to re-clone or pin a --ref to skip fetch)", repo, err)
+			}
+		}
+		// Immutable ref (tag/commit): reuse without fetching.
+	} else {
 		// Clone into a temporary sibling and rename into place, so an interrupted
 		// clone never leaves a half-populated directory that isGitCheckout would
 		// later mistake for a complete checkout.
@@ -88,6 +105,17 @@ func (c *Cache) Checkout(ctx context.Context, repo, ref string) (dir string, rev
 		return "", "", exit.Errorf(exit.NativeCLIFailure, "cannot resolve revision for %s: %v", repo, err)
 	}
 	return dir, strings.TrimSpace(rev), nil
+}
+
+// InvalidateCheckout removes any cached checkout for repo@ref, forcing the
+// next Checkout call to re-clone. It is exposed for --no-cache behaviour and
+// returns nil if no checkout exists.
+func (c *Cache) InvalidateCheckout(repo, ref string) error {
+	dir := c.checkoutDir(repo, ref)
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+		return exit.Errorf(exit.GeneralError, "cannot remove cached checkout: %v", err)
+	}
+	return nil
 }
 
 // checkoutDir is the deterministic on-disk location for a repo@ref checkout. The
