@@ -13,6 +13,15 @@ const gitBin = "git"
 // keep the regenerable cache small and never executes repository code.
 type ExecGit struct{}
 
+// Fetch updates dir to the remote default branch HEAD. It is used to refresh
+// default-branch (empty ref) checkouts so preview shows current content.
+func (ExecGit) Fetch(ctx context.Context, dir string) error {
+	if err := runGit(ctx, dir, "fetch", "--depth", "1", "origin"); err != nil {
+		return err
+	}
+	return runGit(ctx, dir, "reset", "--hard", "FETCH_HEAD")
+}
+
 // Clone shallow-clones repoURL at ref into dir. An empty ref clones the
 // repository's default branch via `git clone`. A non-empty ref is fetched
 // explicitly (`git init` + `git fetch --depth 1 origin <ref>` +

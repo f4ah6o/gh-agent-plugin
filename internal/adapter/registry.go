@@ -16,6 +16,13 @@ func NewRegistry(r Runner) *Registry {
 	return &Registry{adapters: []Adapter{NewClaude(r), NewCodex(r)}}
 }
 
+// NewRegistryFrom builds a registry from a pre-built set of adapters. It is
+// used in tests that need to inject a fake adapter into the full CLI dispatch
+// path (e.g. to simulate marketplace state changes across calls).
+func NewRegistryFrom(ads ...Adapter) *Registry {
+	return &Registry{adapters: ads}
+}
+
 // All returns every registered adapter.
 func (reg *Registry) All() []Adapter { return reg.adapters }
 

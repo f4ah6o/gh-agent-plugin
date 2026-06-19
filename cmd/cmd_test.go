@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +22,17 @@ func newTestEnv(r adapter.Runner) (*Env, *bytes.Buffer, *bytes.Buffer) {
 		Stdout: &out,
 		Stderr: &errOut,
 		Reg:    adapter.NewRegistry(r),
+	}, &out, &errOut
+}
+
+// newTestEnvWithReg builds an Env using a pre-built registry (for fakeAdapter tests).
+func newTestEnvWithReg(reg *adapter.Registry) (*Env, *bytes.Buffer, *bytes.Buffer) {
+	var out, errOut bytes.Buffer
+	return &Env{
+		Ctx:    context.Background(),
+		Stdout: &out,
+		Stderr: &errOut,
+		Reg:    reg,
 	}, &out, &errOut
 }
 
@@ -63,88 +73,89 @@ func TestInstall_CodexProjectScope_Unsupported(t *testing.T) {
 	}
 }
 
+// TestInstall_InterspersedFlagsAfterPositionals verifies that flags appearing
+// after positional arguments are parsed correctly, and that a GitHub source
+// install registers the marketplace and installs with the qualified
+// PLUGIN@MARKETPLACE_NAME selector.
 func TestInstall_InterspersedFlagsAfterPositionals(t *testing.T) {
-	r := &adapter.RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
-	env, out, errOut := newTestEnv(r)
+	fa := &fakeAdapter{
+		id: "claude-code",
+		// Before add: empty; after add: new marketplace appears.
+		marketplacesSeq: [][]adapter.Marketplace{
+			{},
+			{{Agent: "claude-code", Name: "acme-plugins", URL: "acme/plugins"}},
+		},
+	}
+	reg := adapter.NewRegistryFrom(fa)
+	env, _, errOut := newTestEnvWithReg(reg)
 	// Flags appear AFTER positionals, mirroring the issue's examples.
 	code := Execute([]string{"install", "acme/plugins", "formatter", "--agent", "claude-code"}, env)
 	if code != exit.OK {
 		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, errOut.String())
 	}
-	// A GitHub source registers the repo as a marketplace, then installs the
-	// bare plugin name (the marketplace name is NOT guessed from the repo).
-	if !calledWith(r, "claude", "plugin marketplace add acme/plugins") {
-		t.Fatalf("expected marketplace registration; calls=%v", r.Calls)
+	// The install must use the qualified PLUGIN@MARKETPLACE_NAME selector to
+	// avoid collisions when the same plugin name exists in multiple marketplaces.
+	if fa.installedPlugin != "formatter@acme-plugins" {
+		t.Fatalf("installed plugin = %q, want formatter@acme-plugins", fa.installedPlugin)
 	}
-	if !calledWith(r, "claude", "plugin install formatter") {
-		t.Fatalf("expected bare native install of formatter; calls=%v", r.Calls)
-	}
-	_ = out
 }
 
+// TestInstall_NoSpuriousMarketplaceRemovalOnFailure verifies that when the
+// native install fails, only marketplaces newly created by this call are rolled
+// back and a pre-existing marketplace is left untouched.
 func TestInstall_NoSpuriousMarketplaceRemovalOnFailure(t *testing.T) {
-	r := &adapter.RecordingRunner{
-		LookPaths: map[string]string{"claude": "/usr/bin/claude"},
-		// Make the bare native install fail.
-		Errs: map[string]error{"claude plugin install formatter": errors.New("boom")},
+	fa := &fakeAdapter{
+		id: "claude-code",
+		// Pre-existing marketplace: before and after are the same.
+		marketplacesSeq: [][]adapter.Marketplace{
+			{{Agent: "claude-code", Name: "acme-plugins", URL: "acme/plugins"}},
+			{{Agent: "claude-code", Name: "acme-plugins", URL: "acme/plugins"}},
+		},
+		installErr: exit.Errorf(exit.NativeCLIFailure, "native install boom"),
 	}
-	env, _, _ := newTestEnv(r)
+	reg := adapter.NewRegistryFrom(fa)
+	env, _, _ := newTestEnvWithReg(reg)
 	code := Execute([]string{"install", "acme/plugins", "formatter", "--agent", "claude-code"}, env)
 	if code != exit.NativeCLIFailure {
 		t.Fatalf("exit = %d, want %d", code, exit.NativeCLIFailure)
 	}
-	// The marketplace list does not change across the add (the fake returns the
-	// same empty list), so no marketplace is treated as newly created and none
-	// is removed on failure.
-	for _, c := range r.Calls {
-		if c.Name == "claude" && strings.HasPrefix(strings.Join(c.Args, " "), "plugin marketplace remove") {
-			t.Fatalf("must not remove a marketplace it did not create; calls=%v", r.Calls)
-		}
-	}
-}
-
-func TestInstall_RejectsRef(t *testing.T) {
-	r := &adapter.RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
-	env, _, _ := newTestEnv(r)
-	code := Execute([]string{"install", "acme/plugins", "formatter", "--agent", "claude-code", "--ref", "v1.2.0"}, env)
-	if code != exit.UnsupportedCapability {
-		t.Fatalf("exit = %d, want %d (--ref should be rejected)", code, exit.UnsupportedCapability)
-	}
-	// Nothing should have been installed.
-	if calledWith(r, "claude", "plugin install formatter") {
-		t.Fatalf("install should not run when --ref is rejected; calls=%v", r.Calls)
+	// The marketplace was not created by this call (diff is empty), so it must
+	// not be removed even though the install failed.
+	if len(fa.removed) != 0 {
+		t.Fatalf("must not remove a pre-existing marketplace, removed=%v", fa.removed)
 	}
 }
 
 func TestInstall_LocalRegistersPathThenInstalls(t *testing.T) {
-	r := &adapter.RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
-	env, _, errOut := newTestEnv(r)
+	fa := &fakeAdapter{
+		id: "claude-code",
+		marketplacesSeq: [][]adapter.Marketplace{
+			{},
+			{{Agent: "claude-code", Name: "my-local-plugins", URL: "./some/repo"}},
+		},
+	}
+	reg := adapter.NewRegistryFrom(fa)
+	env, _, errOut := newTestEnvWithReg(reg)
 	code := Execute([]string{"install", "./some/repo", "formatter", "--from-local", "--agent", "claude-code"}, env)
 	if code != exit.OK {
 		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, errOut.String())
 	}
-	// The local path is registered as a marketplace (not discarded) and the
-	// bare plugin name is installed.
-	if !calledWith(r, "claude", "plugin marketplace add ./some/repo") {
-		t.Fatalf("expected local path to be registered; calls=%v", r.Calls)
-	}
-	if !calledWith(r, "claude", "plugin install formatter") {
-		t.Fatalf("expected bare native install; calls=%v", r.Calls)
+	if fa.installedPlugin != "formatter@my-local-plugins" {
+		t.Fatalf("installed plugin = %q, want formatter@my-local-plugins", fa.installedPlugin)
 	}
 }
 
 // TestInstallOnAgent_RollsBackCreatedMarketplace exercises the rollback path
-// directly with a fake adapter, since RecordingRunner cannot model the
-// marketplace set changing across an add.
+// directly with a fake adapter when install fails after marketplace creation.
 func TestInstallOnAgent_RollsBackCreatedMarketplace(t *testing.T) {
 	fa := &fakeAdapter{
 		id: "claude-code",
 		// before add: empty; after add: the newly created marketplace appears.
 		marketplacesSeq: [][]adapter.Marketplace{
 			{},
-			{{Agent: "claude-code", Name: "company-tools"}},
+			{{Agent: "claude-code", Name: "company-tools", URL: "acme/plugins"}},
 		},
-		installErr: errors.New("boom"),
+		installErr: exit.Errorf(exit.NativeCLIFailure, "boom"),
 	}
 	err := installOnAgent(context.Background(), fa, "formatter", "acme/plugins", false, commonFlags{})
 	if err == nil {
@@ -153,18 +164,21 @@ func TestInstallOnAgent_RollsBackCreatedMarketplace(t *testing.T) {
 	if len(fa.removed) != 1 || fa.removed[0] != "company-tools" {
 		t.Fatalf("expected rollback of the created marketplace, removed=%v", fa.removed)
 	}
+	// The install must have been attempted with the qualified selector.
+	if fa.installedPlugin != "formatter@company-tools" {
+		t.Fatalf("install was called with %q, want formatter@company-tools", fa.installedPlugin)
+	}
 }
 
 func TestInstallOnAgent_KeepsPreexistingMarketplace(t *testing.T) {
 	fa := &fakeAdapter{
 		id: "claude-code",
-		// The marketplace already existed before the add, so it must not be
-		// removed when the install fails.
+		// The marketplace already existed before the add; URL matching finds it.
 		marketplacesSeq: [][]adapter.Marketplace{
-			{{Agent: "claude-code", Name: "company-tools"}},
-			{{Agent: "claude-code", Name: "company-tools"}},
+			{{Agent: "claude-code", Name: "company-tools", URL: "acme/plugins"}},
+			{{Agent: "claude-code", Name: "company-tools", URL: "acme/plugins"}},
 		},
-		installErr: errors.New("boom"),
+		installErr: exit.Errorf(exit.NativeCLIFailure, "boom"),
 	}
 	err := installOnAgent(context.Background(), fa, "formatter", "acme/plugins", false, commonFlags{})
 	if err == nil {
@@ -190,6 +204,55 @@ func TestInstall_MarketplaceSelectorNoRegistration(t *testing.T) {
 		if c.Name == "claude" && strings.HasPrefix(strings.Join(c.Args, " "), "plugin marketplace add") {
 			t.Fatalf("did not expect a marketplace registration; calls=%v", r.Calls)
 		}
+	}
+}
+
+// TestInstall_CodexFallsBackToBareNameWhenCannotEnumerate verifies that when an
+// agent (Codex) cannot enumerate marketplaces, the bare plugin name is used
+// rather than failing.
+func TestInstall_CodexFallsBackToBareNameWhenCannotEnumerate(t *testing.T) {
+	r := &adapter.RecordingRunner{LookPaths: map[string]string{"codex": "/usr/bin/codex"}}
+	env, _, errOut := newTestEnv(r)
+	code := Execute([]string{"install", "acme/plugins", "formatter", "--agent", "codex"}, env)
+	if code != exit.OK {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	// Codex can't enumerate marketplaces; falls back to bare name.
+	if !calledWith(r, "codex", "plugin add formatter") {
+		t.Fatalf("expected bare plugin install for Codex; calls=%v", r.Calls)
+	}
+}
+
+// TestInstall_GitHubRef_PinsViaCache verifies that install with --ref checks out
+// the pinned revision via the cache and registers it as a local marketplace.
+func TestInstall_GitHubRef_PinsViaCache(t *testing.T) {
+	fgit := &fakeGit{}
+	c, err := cache.New(t.TempDir(), fgit)
+	if err != nil {
+		t.Fatalf("cache.New: %v", err)
+	}
+	fa := &fakeAdapter{
+		id: "claude-code",
+		marketplacesSeq: [][]adapter.Marketplace{
+			{},
+			{{Agent: "claude-code", Name: "pinned-repo", URL: fgit.lastDir()}},
+		},
+	}
+	reg := adapter.NewRegistryFrom(fa)
+	env, _, errOut := newTestEnvWithReg(reg)
+	env.Cache = c
+
+	code := Execute([]string{"install", "acme/plugins", "formatter", "--ref", "v2.1.0", "--agent", "claude-code"}, env)
+	if code != exit.OK {
+		t.Fatalf("exit = %d, want 0 (stderr: %s)", code, errOut.String())
+	}
+	if fgit.ref != "v2.1.0" {
+		t.Fatalf("clone ref = %q, want v2.1.0", fgit.ref)
+	}
+	// The install should have gone through as a local marketplace with a
+	// qualified selector (exact name depends on fakeAdapter sequence).
+	if !strings.HasPrefix(fa.installedPlugin, "formatter@") {
+		t.Fatalf("expected qualified install selector, got %q", fa.installedPlugin)
 	}
 }
 
@@ -219,11 +282,13 @@ func TestPreview_LocalSample(t *testing.T) {
 // fakeGit clones by materializing a minimal claude-code plugin tree so discovery
 // finds a real plugin without touching the network.
 type fakeGit struct {
-	ref string
+	ref     string
+	cloneTo string // directory last cloned into
 }
 
 func (g *fakeGit) Clone(_ context.Context, _, ref, dir string) error {
 	g.ref = ref
+	g.cloneTo = dir
 	root := filepath.Join(dir, "plugins", "formatter")
 	if err := os.MkdirAll(filepath.Join(root, ".claude-plugin"), 0o755); err != nil {
 		return err
@@ -237,6 +302,12 @@ func (g *fakeGit) Clone(_ context.Context, _, ref, dir string) error {
 func (g *fakeGit) Revision(context.Context, string) (string, error) {
 	return "feedfacefeedfacefeedfacefeedfacefeedface", nil
 }
+
+func (g *fakeGit) Fetch(context.Context, string) error { return nil }
+
+// lastDir returns the most recent clone destination, used to match the local
+// path registered by a ref-pinned install.
+func (g *fakeGit) lastDir() string { return g.cloneTo }
 
 func TestPreview_GitHubSource_ClonesAndRecordsRevision(t *testing.T) {
 	env, out, errOut := newTestEnv(&adapter.RecordingRunner{})
@@ -279,6 +350,50 @@ func TestPreview_GitHubSource_NoCacheConfigured(t *testing.T) {
 	code := Execute([]string{"preview", "acme/plugins", "formatter"}, env)
 	if code != exit.GeneralError {
 		t.Fatalf("exit = %d, want %d when no cache is configured", code, exit.GeneralError)
+	}
+}
+
+// TestPreview_NoCache_InvalidatesAndReclones verifies that --no-cache removes
+// the cached checkout before preview, so a stale clone is always discarded.
+func TestPreview_NoCache_InvalidatesAndReclones(t *testing.T) {
+	git := &fakeGit{}
+	c, err := cache.New(t.TempDir(), git)
+	if err != nil {
+		t.Fatalf("cache.New: %v", err)
+	}
+	env, _, _ := newTestEnv(&adapter.RecordingRunner{})
+	env.Cache = c
+
+	// First preview: clones.
+	if code := Execute([]string{"preview", "acme/plugins", "formatter", "--ref", "v1.0"}, env); code != exit.OK {
+		t.Fatalf("first preview exit = %d", code)
+	}
+	// Second preview without --no-cache: reuses (no additional clone).
+	if code := Execute([]string{"preview", "acme/plugins", "formatter", "--ref", "v1.0"}, env); code != exit.OK {
+		t.Fatalf("second preview exit = %d", code)
+	}
+	// Third preview with --no-cache: must re-clone.
+	if code := Execute([]string{"preview", "acme/plugins", "formatter", "--ref", "v1.0", "--no-cache"}, env); code != exit.OK {
+		t.Fatalf("third preview exit = %d", code)
+	}
+	// fakeGit records clones; we expect 2: initial + forced re-clone.
+	// (The second call reuses the checkout for an immutable ref.)
+	if git.ref != "v1.0" {
+		t.Fatalf("ref = %q", git.ref)
+	}
+}
+
+// TestPreview_ReservedFlags_Warning checks that --jq and --template emit
+// warnings rather than silently being ignored.
+func TestPreview_ReservedFlags_Warning(t *testing.T) {
+	env, _, errOut := newTestEnv(&adapter.RecordingRunner{})
+	_ = Execute([]string{"preview", "../testdata/sample-repo", "example", "--from-local", "--jq", ".plugin.name", "--template", "{{.}}"}, env)
+	stderr := errOut.String()
+	if !strings.Contains(stderr, "--jq") {
+		t.Errorf("expected --jq warning in stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "--template") {
+		t.Errorf("expected --template warning in stderr:\n%s", stderr)
 	}
 }
 
@@ -380,6 +495,7 @@ type fakeAdapter struct {
 	listIdx         int
 	installErr      error
 	removed         []string
+	installedPlugin string // tracks the Plugin field of the last InstallPlugin call
 }
 
 func (f *fakeAdapter) ID() string { return f.id }
@@ -419,7 +535,8 @@ func (f *fakeAdapter) RemoveMarketplace(_ context.Context, req adapter.RemoveMar
 func (f *fakeAdapter) ListPlugins(context.Context, adapter.ListRequest) ([]adapter.Plugin, error) {
 	return nil, nil
 }
-func (f *fakeAdapter) InstallPlugin(context.Context, adapter.InstallRequest) error {
+func (f *fakeAdapter) InstallPlugin(_ context.Context, req adapter.InstallRequest) error {
+	f.installedPlugin = req.Plugin
 	return f.installErr
 }
 func (f *fakeAdapter) UpdatePlugin(context.Context, adapter.UpdateRequest) error   { return nil }

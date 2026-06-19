@@ -11,11 +11,16 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
 	"github.com/f4ah6o/gh-agent-plugin/internal/cache"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
 )
+
+// defaultTimeout is the maximum time any command is allowed to run before
+// being cancelled. It guards against hung native CLIs and network operations.
+const defaultTimeout = 5 * time.Minute
 
 // Env carries the I/O streams, adapter registry, and source cache a command
 // needs. It is injected so tests can swap streams, use a fake runner, and use a
@@ -55,8 +60,10 @@ var commands = map[string]commandFunc{
 // Main is the process entry point. It builds a production Env and returns the
 // exit code.
 func Main(args []string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+	defer cancel()
 	env := &Env{
-		Ctx:    context.Background(),
+		Ctx:    ctx,
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		Reg:    adapter.NewRegistry(adapter.ExecRunner{}),
@@ -141,6 +148,7 @@ type commonFlags struct {
 	jsonFields string
 	jq         string
 	template   string
+	timeout    time.Duration
 }
 
 // register wires the common flags onto fs. Individual commands ignore the flags
@@ -156,8 +164,36 @@ func (c *commonFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&c.yes, "yes", false, "assume yes for confirmations")
 	fs.BoolVar(&c.jsonOut, "json", false, "emit JSON output")
 	fs.StringVar(&c.jsonFields, "json-fields", "", "comma-separated JSON fields to include")
-	fs.StringVar(&c.jq, "jq", "", "jq filter applied to JSON output (reserved)")
-	fs.StringVar(&c.template, "template", "", "Go template applied to output (reserved)")
+	fs.StringVar(&c.jq, "jq", "", "jq filter applied to JSON output (reserved, not yet implemented)")
+	fs.StringVar(&c.template, "template", "", "Go template applied to output (reserved, not yet implemented)")
+	fs.DurationVar(&c.timeout, "timeout", 0, "override the default operation timeout (e.g. 30s, 2m)")
+}
+
+// applyTimeout derives a new context with the requested timeout, replacing
+// env.Ctx. The returned cancel function must be deferred by the caller. If no
+// timeout was requested the original context is kept and the cancel is a no-op.
+func (c *commonFlags) applyTimeout(env *Env) func() {
+	if c.timeout <= 0 {
+		return func() {}
+	}
+	ctx, cancel := context.WithTimeout(env.Ctx, c.timeout)
+	env.Ctx = ctx
+	return cancel
+}
+
+// warnReservedFlags emits a stderr warning for each output flag that was
+// supplied but is not yet implemented. Callers always receive empty output for
+// these flags; the warning prevents silent mis-use.
+func (c *commonFlags) warnReservedFlags(env *Env) {
+	if c.jq != "" {
+		fmt.Fprintln(env.Stderr, "warning: --jq is not yet implemented and will be ignored")
+	}
+	if c.template != "" {
+		fmt.Fprintln(env.Stderr, "warning: --template is not yet implemented and will be ignored")
+	}
+	if c.jsonFields != "" {
+		fmt.Fprintln(env.Stderr, "warning: --json-fields is not yet implemented and will be ignored")
+	}
 }
 
 // newFlagSet returns a FlagSet that writes errors to env.Stderr and does not

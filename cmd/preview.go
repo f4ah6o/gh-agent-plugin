@@ -23,13 +23,18 @@ type previewResult struct {
 func runPreview(args []string, env *Env) error {
 	var cf commonFlags
 	var security bool
+	var noCache bool
 	fs := newFlagSet("preview", env)
 	cf.register(fs)
 	fs.BoolVar(&security, "security", false, "reserved: deeper security scan (PluginSpector, phase 2)")
+	fs.BoolVar(&noCache, "no-cache", false, "discard any cached checkout and re-clone before preview")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
 	}
+	cancel := cf.applyTimeout(env)
+	defer cancel()
+	cf.warnReservedFlags(env)
 	_ = security // preview always reports static findings; --security is reserved.
 
 	spec, err := source.Parse(pos, cf.ref, cf.fromLocal)
@@ -37,7 +42,7 @@ func runPreview(args []string, env *Env) error {
 		return err
 	}
 
-	repoRoot, srcMeta, err := resolveRepoRoot(env, spec)
+	repoRoot, srcMeta, err := resolveRepoRoot(env, spec, noCache)
 	if err != nil {
 		return err
 	}
@@ -69,15 +74,21 @@ func runPreview(args []string, env *Env) error {
 // resolveRepoRoot resolves a source spec to a local repository root for static
 // discovery. Local sources are used as-is; a GitHub source is cloned into the
 // regenerable cache (issue #4, Phase 2) and the resolved revision is recorded in
-// the returned metadata. A marketplace selector has no local files to inspect,
-// so previewing it remains unsupported.
-func resolveRepoRoot(env *Env, spec source.Spec) (string, map[string]string, error) {
+// the returned metadata. When noCache is true the cached checkout is discarded
+// and a fresh clone is performed. A marketplace selector has no local files to
+// inspect, so previewing it remains unsupported.
+func resolveRepoRoot(env *Env, spec source.Spec, noCache bool) (string, map[string]string, error) {
 	switch spec.Kind {
 	case source.KindLocal:
 		return spec.Path, map[string]string{"type": "local", "path": spec.Path}, nil
 	case source.KindGitHub:
 		if env.Cache == nil {
 			return "", nil, exit.Errorf(exit.GeneralError, "source cache is unavailable; cannot resolve a GitHub source")
+		}
+		if noCache {
+			if err := env.Cache.InvalidateCheckout(spec.Repository, spec.Ref); err != nil {
+				return "", nil, err
+			}
 		}
 		dir, revision, err := env.Cache.Checkout(env.Ctx, spec.Repository, spec.Ref)
 		if err != nil {
@@ -108,6 +119,9 @@ func printPreview(env *Env, dp discovery.DiscoveredPlugin, src map[string]string
 	fmt.Fprintf(w, "Root:             %s\n", dp.Root)
 	fmt.Fprintf(w, "Supported agents: %s\n", join(dp.Agents))
 	fmt.Fprintf(w, "Source:           %s\n", sourceLine(src))
+	if p := src["path"]; p != "" && src["type"] == "github" {
+		fmt.Fprintf(w, "Cache path:       %s\n", p)
+	}
 	fmt.Fprintf(w, "Manifests:        %s\n", joinMap(dp.Manifests))
 	fmt.Fprintf(w, "Skills:           %s\n", join(dp.Skills))
 	fmt.Fprintf(w, "Commands:         %s\n", join(dp.Commands))

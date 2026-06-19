@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
@@ -30,17 +31,37 @@ func runInstall(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	cancel := cf.applyTimeout(env)
+	defer cancel()
+	cf.warnReservedFlags(env)
 
 	spec, err := source.Parse(pos, cf.ref, cf.fromLocal)
 	if err != nil {
 		return err
 	}
-	// Pinning a GitHub source to a ref requires resolving and registering that
-	// revision, which depends on the Phase 2 clone/cache path. Rather than
-	// accept --ref and silently install the default branch, reject it.
-	if spec.Ref != "" {
-		return exit.Errorf(exit.UnsupportedCapability,
-			"--ref pinning is not yet supported (Phase 2, issue #4); omit --ref to install the default revision")
+
+	// Ref pinning: for a GitHub source with --ref, resolve the pinned revision
+	// via the cache and register that local checkout as a local marketplace.
+	// This ensures the installed plugin comes from the exact ref the user
+	// reviewed, not whatever the native CLI fetches at install time.
+	if spec.Ref != "" && spec.Kind == source.KindGitHub {
+		if env.Cache == nil {
+			return exit.Errorf(exit.GeneralError,
+				"source cache is unavailable; cannot pin --ref %s (cache directory could not be initialised)", spec.Ref)
+		}
+		localDir, _, err := env.Cache.Checkout(env.Ctx, spec.Repository, spec.Ref)
+		if err != nil {
+			return err
+		}
+		// Replace the GitHub source with a local path pointing to the pinned
+		// checkout, so the rest of the install flow registers it as a local
+		// marketplace and installs from that exact revision.
+		pinned := source.Spec{
+			Kind:   source.KindLocal,
+			Plugin: spec.Plugin,
+			Path:   localDir,
+		}
+		spec = pinned
 	}
 
 	adapters, err := cf.selectAdapters(env)
@@ -73,30 +94,43 @@ func runInstall(args []string, env *Env) error {
 }
 
 // installOnAgent installs one plugin on one agent. For a GitHub or local source
-// it first registers that source as a marketplace (the native CLI derives the
-// marketplace name from the source's manifest), then installs the bare plugin
-// name, letting the native CLI resolve it across the configured marketplaces.
-// A PLUGIN@MARKETPLACE selector is installed verbatim and registers nothing.
+// it first registers that source as a marketplace, derives the marketplace name
+// from the before/after listing diff, then installs PLUGIN@MARKETPLACE_NAME to
+// avoid ambiguity when multiple marketplaces share a plugin name.
 //
-// Rollback (issue #1, "Failure and rollback") is driven by observing which
-// marketplaces this call actually created: the marketplace set is snapshotted
-// before and after AddMarketplace, and only the newly-created entries are
-// removed if the install then fails. Because the names come from the native
-// listing rather than a guess, a failed install can never delete a user's
-// pre-existing marketplace, and when an agent cannot enumerate marketplaces
-// nothing is rolled back.
+// For agents that cannot enumerate marketplaces (e.g. Codex), the bare plugin
+// name is used as a fallback. For agents that support enumeration but the name
+// cannot be determined, the install fails with an explicit error rather than
+// risking resolution from the wrong marketplace.
+//
+// Rollback (issue #1) removes only the marketplaces this call newly created.
 func installOnAgent(ctx context.Context, ad adapter.Adapter, selector, regSource string, regLocal bool, cf commonFlags) error {
+	installPlugin := selector // pre-qualified for marketplace selectors; bare for GitHub/local
 	var created []string
 	if regSource != "" && !cf.dryRun {
-		added, err := registerSourceMarketplace(ctx, ad, regSource, regLocal)
+		name, added, canEnum, err := registerSourceMarketplace(ctx, ad, regSource, regLocal)
 		if err != nil {
 			return err
 		}
 		created = added
+		if name != "" {
+			installPlugin = selector + "@" + name
+		} else if canEnum {
+			// Agent supports enumeration but the marketplace name is still unknown
+			// (e.g. AddMarketplace didn't produce a new entry). Proceeding with a
+			// bare name risks installing from the wrong marketplace.
+			for _, n := range created {
+				_ = ad.RemoveMarketplace(ctx, adapter.RemoveMarketplaceRequest{Name: n})
+			}
+			return exit.Errorf(exit.NativeCLIFailure,
+				"could not determine the marketplace name for source %q after registration; "+
+					"re-run using a PLUGIN@MARKETPLACE selector instead", regSource)
+		}
+		// !canEnum: agent cannot enumerate (e.g. Codex); proceed with bare name.
 	}
 
 	err := ad.InstallPlugin(ctx, adapter.InstallRequest{
-		Plugin: selector,
+		Plugin: installPlugin,
 		Scope:  adapter.Scope(cf.scope),
 		DryRun: cf.dryRun,
 		Force:  cf.force,
@@ -110,51 +144,87 @@ func installOnAgent(ctx context.Context, ad adapter.Adapter, selector, regSource
 	return err
 }
 
-// registerSourceMarketplace adds source as a marketplace and returns the names
-// of marketplaces that this call newly created (for rollback). When the agent
-// cannot enumerate marketplaces the created set is empty, so a later failure
-// rolls back nothing.
-func registerSourceMarketplace(ctx context.Context, ad adapter.Adapter, source string, local bool) ([]string, error) {
-	before, beforeOK := marketplaceNameSet(ctx, ad)
-	if err := ad.AddMarketplace(ctx, adapter.AddMarketplaceRequest{Source: source, Local: local}); err != nil {
-		return nil, err
+// registerSourceMarketplace adds source as a marketplace and returns:
+//   - name: the marketplace name to use for a qualified PLUGIN@NAME selector,
+//     empty when it cannot be determined;
+//   - created: names of marketplaces newly created by this call (for rollback);
+//   - canEnum: true when the agent supports marketplace enumeration; false for
+//     agents (e.g. Codex) that reject listing with UnsupportedCapability.
+//
+// When the agent can enumerate, name is derived by diffing the marketplace set
+// before and after AddMarketplace. If exactly one new entry appears, its name
+// is returned. When the diff is empty (marketplace was already registered), URL
+// matching against the after listing is attempted so re-installs still qualify.
+func registerSourceMarketplace(ctx context.Context, ad adapter.Adapter, src string, local bool) (name string, created []string, canEnum bool, err error) {
+	before, beforeCanEnum := snapshotMarketplaces(ctx, ad)
+	if err := ad.AddMarketplace(ctx, adapter.AddMarketplaceRequest{Source: src, Local: local}); err != nil {
+		return "", nil, beforeCanEnum, err
 	}
-	if !beforeOK {
-		return nil, nil
+	if !beforeCanEnum {
+		return "", nil, false, nil
 	}
-	after, afterOK := marketplaceNameSet(ctx, ad)
-	if !afterOK {
-		return nil, nil
+
+	after, afterCanEnum := snapshotMarketplaces(ctx, ad)
+	if !afterCanEnum {
+		return "", nil, true, nil
 	}
-	var created []string
-	for name := range after {
-		if !before[name] {
-			created = append(created, name)
+
+	beforeSet := toMarketplaceNameSet(before)
+	for _, m := range after {
+		if !beforeSet[m.Name] {
+			created = append(created, m.Name)
 		}
 	}
 	sort.Strings(created)
-	return created, nil
+
+	if len(created) == 1 {
+		return created[0], created, true, nil
+	}
+
+	// 0 or multiple newly created: try URL/source matching against the after
+	// listing so a pre-existing or multi-added marketplace can still be found.
+	return marketplaceMatchSource(after, src), created, true, nil
 }
 
-// marketplaceNameSet returns the set of configured marketplace names for the
-// agent. ok is false when the agent cannot enumerate marketplaces.
-func marketplaceNameSet(ctx context.Context, ad adapter.Adapter) (set map[string]bool, ok bool) {
-	markets, err := ad.ListMarketplaces(ctx)
+// snapshotMarketplaces lists the agent's configured marketplaces. canEnum is
+// false only when the agent does not support enumeration (UnsupportedCapability
+// or any other error from ListMarketplaces).
+func snapshotMarketplaces(ctx context.Context, ad adapter.Adapter) (markets []adapter.Marketplace, canEnum bool) {
+	m, err := ad.ListMarketplaces(ctx)
 	if err != nil {
 		return nil, false
 	}
-	set = make(map[string]bool, len(markets))
+	return m, true
+}
+
+// toMarketplaceNameSet builds a set of marketplace names for O(1) lookup.
+func toMarketplaceNameSet(markets []adapter.Marketplace) map[string]bool {
+	s := make(map[string]bool, len(markets))
 	for _, m := range markets {
-		set[m.Name] = true
+		s[m.Name] = true
 	}
-	return set, true
+	return s
+}
+
+// marketplaceMatchSource finds the first marketplace in the list whose URL
+// matches src (an OWNER/REPO slug or a local path). It tolerates full GitHub
+// HTTPS URLs as well as bare owner/repo slugs returned by different agent CLIs.
+func marketplaceMatchSource(markets []adapter.Marketplace, src string) string {
+	for _, m := range markets {
+		u := m.URL
+		if u == src ||
+			strings.HasSuffix(u, "/"+src) ||
+			strings.HasSuffix(u, "/"+src+".git") {
+			return m.Name
+		}
+	}
+	return ""
 }
 
 // installSelector renders the selector handed to the native CLI.
 //   - PLUGIN@MARKETPLACE selector: used verbatim.
-//   - GitHub or local source: the bare plugin name, resolved by the native CLI
-//     against the marketplace registered from the source. The marketplace name
-//     is never guessed from the repo/path.
+//   - GitHub or local source: the bare plugin name; installOnAgent qualifies
+//     it with the discovered marketplace name before passing to native CLI.
 func installSelector(spec source.Spec) string {
 	if spec.Kind == source.KindMarketplace {
 		return spec.Plugin + "@" + spec.Marketplace
