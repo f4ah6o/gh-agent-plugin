@@ -64,6 +64,15 @@ func runInstall(args []string, env *Env) error {
 		spec = pinned
 	}
 
+	// --ref is only meaningful for GitHub sources. Reject it for marketplace
+	// selectors and local paths rather than silently ignoring it, which would
+	// mislead users into thinking the install was revision-pinned.
+	if spec.Ref != "" {
+		return exit.Errorf(exit.UnsupportedCapability,
+			"--ref is only supported for GitHub sources (OWNER/REPO); "+
+				"marketplace selectors and local paths do not support revision pinning")
+	}
+
 	adapters, err := cf.selectAdapters(env)
 	if err != nil {
 		return err

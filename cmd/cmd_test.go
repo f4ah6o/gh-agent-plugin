@@ -256,6 +256,28 @@ func TestInstall_GitHubRef_PinsViaCache(t *testing.T) {
 	}
 }
 
+// TestInstall_RefRejectedForNonGitHub verifies that --ref is rejected with
+// UnsupportedCapability when the install source is not a GitHub repo, rather
+// than being silently ignored and misleading the user.
+func TestInstall_RefRejectedForNonGitHub(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"marketplace selector", []string{"install", "formatter@acme", "--ref", "v1.0.0", "--agent", "claude-code"}},
+		{"local path", []string{"install", "../testdata/sample-repo", "formatter", "--from-local", "--ref", "v1.0.0", "--agent", "claude-code"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, _, _ := newTestEnv(&adapter.RecordingRunner{})
+			code := Execute(tc.args, env)
+			if code != exit.UnsupportedCapability {
+				t.Fatalf("exit = %d, want %d (UnsupportedCapability) for %v", code, exit.UnsupportedCapability, tc.args)
+			}
+		})
+	}
+}
+
 // calledWith reports whether the runner recorded a call to name with exactly
 // the given space-joined args.
 func calledWith(r *adapter.RecordingRunner, name, args string) bool {
