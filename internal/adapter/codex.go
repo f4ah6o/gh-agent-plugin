@@ -2,7 +2,7 @@ package adapter
 
 import (
 	"context"
-	"encoding/json"
+	"regexp"
 	"strings"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
@@ -47,7 +47,7 @@ func (*Codex) Capabilities(ctx context.Context) (Capabilities, error) {
 		EnableDisable:     false,
 		MarketplaceUpdate: true,
 		DependencyPrune:   false,
-		JSONOutput:        true,
+		JSONOutput:        false,
 		LocalMarketplace:  true,
 		GitMarketplace:    true,
 	}, nil
@@ -104,20 +104,19 @@ func (c *Codex) RemoveMarketplace(ctx context.Context, req RemoveMarketplaceRequ
 	return nil
 }
 
-// codexPlugin is the shape of an entry in `codex plugin list --json`.
-type codexPlugin struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Marketplace string `json:"marketplace"`
-	Version     string `json:"version"`
-	Status      string `json:"status"`
-}
+// codexTableRowRe matches a data row from `codex plugin list` table output.
+// Columns: PLUGIN  STATUS  VERSION  PATH
+// STATUS may contain a comma (e.g. "installed, enabled"), so we match it as
+// two words separated by optional ", ".
+var codexTableRowRe = regexp.MustCompile(
+	`^(\S+)\s{2,}(not installed|installed(?:,\s*\w+)?)\s{2,}(\S*)\s{2,}(\S+)\s*$`,
+)
 
 func (c *Codex) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, error) {
 	if err := c.rejectScope(req.Scope); err != nil {
 		return nil, err
 	}
-	out, _, err := c.Runner.Run(ctx, codexBin, "plugin", "list", "--json")
+	out, _, err := c.Runner.Run(ctx, codexBin, "plugin", "list")
 	if err != nil {
 		return nil, nativeErr(c.ID(), err)
 	}
@@ -125,31 +124,30 @@ func (c *Codex) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, err
 	if trimmed == "" {
 		return nil, nil
 	}
-	var raw []codexPlugin
-	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
-		return nil, exit.Errorf(exit.NativeCLIFailure, "agent %s returned unparseable JSON: %v", c.ID(), err)
-	}
-	plugins := make([]Plugin, 0, len(raw))
-	for _, p := range raw {
-		id := p.ID
-		if id == "" && p.Name != "" {
-			id = p.Name
-			if p.Marketplace != "" {
-				id = p.Name + "@" + p.Marketplace
-			}
+	var plugins []Plugin
+	for _, line := range strings.Split(trimmed, "\n") {
+		m := codexTableRowRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
 		}
-		status := p.Status
-		if status == "" {
-			status = "installed"
+		id := m[1]
+		status := strings.TrimSpace(m[2])
+		version := m[3]
+
+		name := id
+		var marketplace string
+		if at := strings.LastIndex(id, "@"); at > 0 {
+			name = id[:at]
+			marketplace = id[at+1:]
 		}
 		plugins = append(plugins, Plugin{
 			Agent:       c.ID(),
 			ID:          id,
-			Name:        p.Name,
-			Marketplace: p.Marketplace,
+			Name:        name,
+			Marketplace: marketplace,
 			Status:      status,
-			Enabled:     true,
-			Version:     p.Version,
+			Enabled:     strings.Contains(status, "enabled"),
+			Version:     version,
 			Source:      Source{Type: "marketplace"},
 		})
 	}
