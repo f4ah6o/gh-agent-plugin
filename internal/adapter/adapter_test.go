@@ -64,11 +64,17 @@ func TestCodexEnableDisableUnsupported(t *testing.T) {
 	assertCode(t, c.DisablePlugin(context.Background(), DisableRequest{Plugin: "x"}), exit.UnsupportedCapability)
 }
 
-func TestCodexListParsesJSON(t *testing.T) {
+func TestCodexListParsesTable(t *testing.T) {
+	table := "Marketplace `company`\n" +
+		"/path/to/marketplace.json\n" +
+		"\n" +
+		"PLUGIN                            STATUS              VERSION       PATH\n" +
+		"formatter@company                 installed, enabled  1.2.0         /path/to/formatter\n" +
+		"other@company                     not installed                     /path with spaces/to/other\n"
 	r := &RecordingRunner{
 		LookPaths: map[string]string{"codex": "/usr/bin/codex"},
 		Stdout: map[string]string{
-			"codex plugin list --json": `[{"id":"formatter@company","name":"formatter","marketplace":"company","version":"1.2.0","status":"installed"}]`,
+			"codex plugin list": table,
 		},
 	}
 	c := NewCodex(r)
@@ -76,12 +82,16 @@ func TestCodexListParsesJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(plugins) != 1 {
-		t.Fatalf("expected 1 plugin, got %d", len(plugins))
+	if len(plugins) != 2 {
+		t.Fatalf("expected 2 plugins, got %d", len(plugins))
 	}
 	p := plugins[0]
-	if p.ID != "formatter@company" || p.Version != "1.2.0" || p.Agent != "codex" {
-		t.Fatalf("unexpected plugin: %+v", p)
+	if p.ID != "formatter@company" || p.Name != "formatter" || p.Marketplace != "company" || p.Version != "1.2.0" || p.Agent != "codex" || !p.Enabled {
+		t.Fatalf("unexpected plugin[0]: %+v", p)
+	}
+	p2 := plugins[1]
+	if p2.ID != "other@company" || p2.Status != "not installed" || p2.Enabled {
+		t.Fatalf("unexpected plugin[1]: %+v", p2)
 	}
 }
 
@@ -89,7 +99,7 @@ func TestClaudeListParsesJSON(t *testing.T) {
 	r := &RecordingRunner{
 		LookPaths: map[string]string{"claude": "/usr/bin/claude"},
 		Stdout: map[string]string{
-			"claude plugin list --json":             `[{"name":"formatter","marketplace":"company","version":"1.2.0","scope":"user","enabled":true}]`,
+			"claude plugin list --json":             `[{"id":"formatter@company","version":"1.2.0","scope":"user","enabled":true}]`,
 			"claude plugin marketplace list --json": `[{"name":"company","type":"github","url":"github.com/acme/plugins"}]`,
 		},
 	}
