@@ -31,6 +31,7 @@ type Env struct {
 	Stderr io.Writer
 	Reg    *adapter.Registry
 	Cache  *cache.Cache
+	Runner adapter.Runner
 }
 
 // commandFunc is the signature every subcommand implements.
@@ -55,6 +56,8 @@ var commands = map[string]commandFunc{
 	"doctor":      runDoctor,
 	"search":      runSearch,
 	"publish":     runPublish,
+	"issue":       runIssue,
+	"pr":          runPR,
 }
 
 // Main is the process entry point. It builds a production Env and returns the
@@ -67,6 +70,7 @@ func Main(args []string) int {
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		Reg:    adapter.NewRegistry(adapter.ExecRunner{}),
+		Runner: adapter.ExecRunner{},
 	}
 	// A nil cache here defers the "cannot determine cache dir" error to the one
 	// command (preview of a GitHub source) that actually needs it, so the rest of
@@ -118,6 +122,8 @@ Commands:
   update      Update plugins
   marketplace Manage configured marketplaces (add/list/update/remove)
   doctor      Diagnose the environment and agent plugin support
+  issue       Manage GitHub issues (list|view|comment)
+  pr          Manage GitHub pull requests (comment)
   search      (phase 2) Search marketplaces
   publish     (phase 2) Publish a plugin
 

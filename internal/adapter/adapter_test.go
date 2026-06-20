@@ -122,6 +122,28 @@ func TestClaudeListParsesJSON(t *testing.T) {
 	}
 }
 
+func TestClaudeListParsesIDField(t *testing.T) {
+	r := &RecordingRunner{
+		LookPaths: map[string]string{"claude": "/usr/bin/claude"},
+		Stdout: map[string]string{
+			"claude plugin list --json": `[{"id":"formatter@company","version":"1.2.0","scope":"user","enabled":true}]`,
+		},
+	}
+	c := NewClaude(r)
+
+	plugins, err := c.ListPlugins(context.Background(), ListRequest{})
+	if err != nil {
+		t.Fatalf("ListPlugins: %v", err)
+	}
+	if len(plugins) != 1 {
+		t.Fatalf("expected 1 plugin, got %d", len(plugins))
+	}
+	p := plugins[0]
+	if p.Name != "formatter" || p.Marketplace != "company" || p.ID != "formatter@company" {
+		t.Fatalf("unexpected plugin: Name=%q Marketplace=%q ID=%q", p.Name, p.Marketplace, p.ID)
+	}
+}
+
 func TestClaudeListEmptyJSON(t *testing.T) {
 	// Empty native output must parse as an empty slice, not an error.
 	c := NewClaude(&RecordingRunner{

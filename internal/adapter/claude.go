@@ -141,7 +141,7 @@ func (c *Claude) RemoveMarketplace(ctx context.Context, req RemoveMarketplaceReq
 // claudePluginJSON is a tolerant view of an entry from
 // `claude plugin list --json`. Unknown fields are ignored.
 type claudePluginJSON struct {
-	ID          string `json:"id"`
+	RawID       string `json:"id"`
 	Name        string `json:"name"`
 	Version     string `json:"version"`
 	Marketplace string `json:"marketplace"`
@@ -177,24 +177,19 @@ func (c *Claude) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, er
 	}
 	plugins := make([]Plugin, 0, len(raw))
 	for _, p := range raw {
-		id := p.ID
-		name := p.Name
-		marketplace := p.Marketplace
-		if id != "" && name == "" {
-			if at := strings.LastIndex(id, "@"); at > 0 {
-				name = id[:at]
-				if marketplace == "" {
-					marketplace = id[at+1:]
+		if p.Name == "" && p.RawID != "" {
+			if at := strings.IndexByte(p.RawID, '@'); at >= 0 {
+				p.Name = p.RawID[:at]
+				if p.Marketplace == "" {
+					p.Marketplace = p.RawID[at+1:]
 				}
 			} else {
-				name = id
+				p.Name = p.RawID
 			}
 		}
-		if id == "" {
-			id = name
-			if marketplace != "" {
-				id = name + "@" + marketplace
-			}
+		id := p.Name
+		if p.Marketplace != "" {
+			id = p.Name + "@" + p.Marketplace
 		}
 		status := p.Status
 		if status == "" {
@@ -211,8 +206,8 @@ func (c *Claude) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, er
 		plugins = append(plugins, Plugin{
 			Agent:       c.ID(),
 			ID:          id,
-			Name:        name,
-			Marketplace: marketplace,
+			Name:        p.Name,
+			Marketplace: p.Marketplace,
 			Status:      status,
 			Enabled:     enabled,
 			Version:     p.Version,
