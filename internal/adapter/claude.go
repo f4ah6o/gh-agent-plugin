@@ -141,6 +141,7 @@ func (c *Claude) RemoveMarketplace(ctx context.Context, req RemoveMarketplaceReq
 // claudePluginJSON is a tolerant view of an entry from
 // `claude plugin list --json`. Unknown fields are ignored.
 type claudePluginJSON struct {
+	RawID       string `json:"id"`
 	Name        string `json:"name"`
 	Version     string `json:"version"`
 	Marketplace string `json:"marketplace"`
@@ -176,6 +177,16 @@ func (c *Claude) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, er
 	}
 	plugins := make([]Plugin, 0, len(raw))
 	for _, p := range raw {
+		if p.Name == "" && p.RawID != "" {
+			if at := strings.IndexByte(p.RawID, '@'); at >= 0 {
+				p.Name = p.RawID[:at]
+				if p.Marketplace == "" {
+					p.Marketplace = p.RawID[at+1:]
+				}
+			} else {
+				p.Name = p.RawID
+			}
+		}
 		id := p.Name
 		if p.Marketplace != "" {
 			id = p.Name + "@" + p.Marketplace
