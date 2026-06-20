@@ -424,7 +424,7 @@ func TestUpdateAll_EnumeratesCodexPlugins(t *testing.T) {
 	r := &adapter.RecordingRunner{
 		LookPaths: map[string]string{"codex": "/usr/bin/codex"},
 		Stdout: map[string]string{
-			"codex plugin list --json": `[{"id":"formatter@company","name":"formatter","marketplace":"company","version":"1.0.0","status":"installed"}]`,
+			"codex plugin list": "PLUGIN                            STATUS              VERSION       PATH\nformatter@company                 installed, enabled  1.0.0         /path/to/formatter\n",
 		},
 	}
 	env, _, errOut := newTestEnv(r)
@@ -462,7 +462,7 @@ func TestUpdateAll_AgentFlagNotWidened(t *testing.T) {
 	r := &adapter.RecordingRunner{
 		LookPaths: map[string]string{"claude": "/usr/bin/claude", "codex": "/usr/bin/codex"},
 		Stdout: map[string]string{
-			"codex plugin list --json": `[{"id":"formatter@company","name":"formatter","version":"1.0.0"}]`,
+			"codex plugin list": "PLUGIN                            STATUS              VERSION       PATH\nformatter@company                 installed, enabled  1.0.0         /path/to/formatter\n",
 		},
 	}
 	env, _, errOut := newTestEnv(r)
