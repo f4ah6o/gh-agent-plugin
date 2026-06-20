@@ -8,6 +8,7 @@ import (
 	"github.com/f4ah6o/gh-agent-plugin/internal/discovery"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
 	"github.com/f4ah6o/gh-agent-plugin/internal/output"
+	"github.com/f4ah6o/gh-agent-plugin/internal/security"
 	"github.com/f4ah6o/gh-agent-plugin/internal/source"
 )
 
@@ -15,7 +16,8 @@ import (
 type previewResult struct {
 	Plugin   discovery.DiscoveredPlugin `json:"plugin"`
 	Source   map[string]string          `json:"source"`
-	Findings []discovery.Finding        `json:"securityFindings"`
+	Findings []security.Finding         `json:"securityFindings"`
+	Report   security.Report            `json:"securityReport"`
 }
 
 // runPreview statically inspects a plugin and prints its components and security
@@ -26,7 +28,7 @@ func runPreview(args []string, env *Env) error {
 	var noCache bool
 	fs := newFlagSet("preview", env)
 	cf.register(fs)
-	fs.BoolVar(&security, "security", false, "reserved: deeper security scan (PluginSpector, phase 2)")
+	fs.BoolVar(&security, "security", false, "run deeper deterministic security scanning")
 	fs.BoolVar(&noCache, "no-cache", false, "discard any cached checkout and re-clone before preview")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
@@ -35,7 +37,6 @@ func runPreview(args []string, env *Env) error {
 	cancel := cf.applyTimeout(env)
 	defer cancel()
 	cf.warnReservedFlags(env)
-	_ = security // preview always reports static findings; --security is reserved.
 
 	spec, err := source.Parse(pos, cf.ref, cf.fromLocal)
 	if err != nil {
@@ -52,21 +53,25 @@ func runPreview(args []string, env *Env) error {
 		return err
 	}
 
-	findings := discovery.Scan(dp)
+	report, err := securitypkgScan(dp.Root, security)
+	if err != nil {
+		return err
+	}
+	findings := report.Findings
 
 	// Emit output in the requested format first, so consumers always see the
 	// findings, then map blocking findings to a non-zero exit regardless of
 	// output format.
 	if cf.jsonOut {
-		if err := output.JSON(env.Stdout, previewResult{Plugin: dp, Source: srcMeta, Findings: findings}); err != nil {
+		if err := output.JSON(env.Stdout, previewResult{Plugin: dp, Source: srcMeta, Findings: findings, Report: report}); err != nil {
 			return err
 		}
 	} else {
 		printPreview(env, dp, srcMeta, findings)
 	}
 
-	if n := countBlocking(findings); n > 0 {
-		return exit.Errorf(exit.ValidationFailed, "preview found %d blocking security issue(s)", n)
+	if report.ShouldBlock() {
+		return exit.Errorf(exit.ValidationFailed, "preview security gate blocked installation (risk %d/100, reasons: %s)", report.RiskScore, joinRuleIDs(report.BlockReasons))
 	}
 	return nil
 }
@@ -113,7 +118,11 @@ func resolveRepoRoot(env *Env, spec source.Spec, noCache bool) (string, map[stri
 	}
 }
 
-func printPreview(env *Env, dp discovery.DiscoveredPlugin, src map[string]string, findings []discovery.Finding) {
+func securitypkgScan(root string, deep bool) (security.Report, error) {
+	return security.Scan(root, security.Options{Deep: deep})
+}
+
+func printPreview(env *Env, dp discovery.DiscoveredPlugin, src map[string]string, findings []security.Finding) {
 	w := env.Stdout
 	fmt.Fprintf(w, "Plugin:           %s\n", dp.Name)
 	fmt.Fprintf(w, "Root:             %s\n", dp.Root)
@@ -137,6 +146,17 @@ func printPreview(env *Env, dp discovery.DiscoveredPlugin, src map[string]string
 	for _, f := range findings {
 		fmt.Fprintf(w, "  [%s] %s: %s (%s)\n", f.Severity, f.Rule, f.Detail, f.Path)
 	}
+}
+
+func joinRuleIDs(ids []security.RuleID) string {
+	if len(ids) == 0 {
+		return "risk score"
+	}
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = string(id)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // sourceLine renders the human-readable source description from preview
@@ -165,16 +185,6 @@ func shortRev(rev string) string {
 		return rev[:12]
 	}
 	return rev
-}
-
-func countBlocking(findings []discovery.Finding) int {
-	n := 0
-	for _, f := range findings {
-		if f.Severity == discovery.SeverityBlocking {
-			n++
-		}
-	}
-	return n
 }
 
 func join(s []string) string {

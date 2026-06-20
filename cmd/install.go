@@ -7,8 +7,10 @@ import (
 	"strings"
 
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
+	"github.com/f4ah6o/gh-agent-plugin/internal/discovery"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
 	"github.com/f4ah6o/gh-agent-plugin/internal/output"
+	"github.com/f4ah6o/gh-agent-plugin/internal/security"
 	"github.com/f4ah6o/gh-agent-plugin/internal/source"
 )
 
@@ -21,12 +23,20 @@ type agentResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
+type installResult struct {
+	Results  []agentResult      `json:"results"`
+	Findings []security.Finding `json:"securityFindings,omitempty"`
+	Report   *security.Report   `json:"securityReport,omitempty"`
+}
+
 // runInstall installs a plugin into each selected agent, delegating to the
 // native CLI. Results are reported per agent; a partial success exits 7.
 func runInstall(args []string, env *Env) error {
 	var cf commonFlags
+	var securityMode bool
 	fs := newFlagSet("install", env)
 	cf.register(fs)
+	fs.BoolVar(&securityMode, "security", false, "scan and gate the plugin before installation")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -38,6 +48,41 @@ func runInstall(args []string, env *Env) error {
 	spec, err := source.Parse(pos, cf.ref, cf.fromLocal)
 	if err != nil {
 		return err
+	}
+
+	var securityReport *security.Report
+	if securityMode {
+		if spec.Kind == source.KindMarketplace {
+			return exit.Errorf(exit.UnsupportedCapability, "--security requires a GitHub or local source; marketplace selectors do not expose a verifiable source tree")
+		}
+		repoRoot, _, resolveErr := resolveRepoRoot(env, spec, false)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		dp, discoverErr := discovery.DiscoverPlugin(repoRoot, spec.Plugin)
+		if discoverErr != nil {
+			return discoverErr
+		}
+		report, scanErr := security.Scan(dp.Root, security.Options{Deep: true})
+		if scanErr != nil {
+			return scanErr
+		}
+		securityReport = &report
+		if report.ShouldBlock() {
+			if cf.jsonOut {
+				if err := output.JSON(env.Stdout, installResult{Results: []agentResult{}, Findings: report.Findings, Report: &report}); err != nil {
+					return err
+				}
+			} else {
+				printInstallSecurity(env, report)
+			}
+			return exit.Errorf(exit.ValidationFailed, "install security gate blocked installation (risk %d/100, reasons: %s)", report.RiskScore, joinRuleIDs(report.BlockReasons))
+		}
+		// Install exactly the checkout that was scanned. Local sources are already
+		// exact; GitHub sources are converted to a local marketplace checkout.
+		if spec.Kind == source.KindGitHub {
+			spec = source.Spec{Kind: source.KindLocal, Plugin: spec.Plugin, Path: repoRoot}
+		}
 	}
 
 	// Ref pinning: for a GitHub source with --ref, resolve the pinned revision
@@ -93,13 +138,28 @@ func runInstall(args []string, env *Env) error {
 	}
 
 	if cf.jsonOut {
-		if err := output.JSON(env.Stdout, map[string]any{"results": results}); err != nil {
+		res := installResult{Results: results}
+		if securityReport != nil {
+			res.Findings = securityReport.Findings
+			res.Report = securityReport
+		}
+		if err := output.JSON(env.Stdout, res); err != nil {
 			return err
 		}
 	} else {
+		if securityReport != nil {
+			printInstallSecurity(env, *securityReport)
+		}
 		printResults(env, results)
 	}
 	return finalize("install", results, errs)
+}
+
+func printInstallSecurity(env *Env, report security.Report) {
+	fmt.Fprintf(env.Stdout, "Security: risk %d/100 (%s), recommendation %s\n", report.RiskScore, report.RiskSeverity, report.Recommendation)
+	for _, f := range report.Findings {
+		fmt.Fprintf(env.Stdout, "  [%s] %s: %s (%s)\n", f.Severity, f.ID, f.Message, f.Path)
+	}
 }
 
 // installOnAgent installs one plugin on one agent. For a GitHub or local source
