@@ -109,7 +109,7 @@ func (c *Codex) RemoveMarketplace(ctx context.Context, req RemoveMarketplaceRequ
 // STATUS may contain a comma (e.g. "installed, enabled"), so we match it as
 // two words separated by optional ", ".
 var codexTableRowRe = regexp.MustCompile(
-	`^(\S+)\s{2,}(not installed|installed(?:,\s*\w+)?)\s{2,}(\S*)\s{2,}(\S+)\s*$`,
+	`^(\S+)\s{2,}(not installed|installed(?:,\s*\w+)?)\s{2,}(\S*)\s{2,}(.+?)\s*$`,
 )
 
 func (c *Codex) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, error) {
@@ -126,6 +126,10 @@ func (c *Codex) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, err
 	}
 	var plugins []Plugin
 	for _, line := range strings.Split(trimmed, "\n") {
+		if line == "" || strings.HasPrefix(line, "Marketplace ") ||
+			strings.HasPrefix(line, "PLUGIN") || strings.HasPrefix(line, "/") {
+			continue
+		}
 		m := codexTableRowRe.FindStringSubmatch(line)
 		if m == nil {
 			continue
@@ -150,6 +154,9 @@ func (c *Codex) ListPlugins(ctx context.Context, req ListRequest) ([]Plugin, err
 			Version:     version,
 			Source:      Source{Type: "marketplace"},
 		})
+	}
+	if len(plugins) == 0 {
+		return nil, exit.Errorf(exit.NativeCLIFailure, "agent %s returned output but no plugins could be parsed", c.ID())
 	}
 	return plugins, nil
 }

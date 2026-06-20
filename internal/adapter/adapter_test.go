@@ -70,7 +70,7 @@ func TestCodexListParsesTable(t *testing.T) {
 		"\n" +
 		"PLUGIN                            STATUS              VERSION       PATH\n" +
 		"formatter@company                 installed, enabled  1.2.0         /path/to/formatter\n" +
-		"other@company                     not installed                     /path/to/other\n"
+		"other@company                     not installed                     /path with spaces/to/other\n"
 	r := &RecordingRunner{
 		LookPaths: map[string]string{"codex": "/usr/bin/codex"},
 		Stdout: map[string]string{
