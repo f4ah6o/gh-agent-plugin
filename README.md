@@ -44,18 +44,47 @@ gh agent-plugin install OWNER/REPO PLUGIN --agent claude-code
 gh agent-plugin install PLUGIN@MARKETPLACE --agent codex
 gh agent-plugin install ./path/to/repo PLUGIN --from-local
 gh agent-plugin preview ./path/to/repo PLUGIN --from-local --json
+gh agent-plugin preview OWNER/REPO PLUGIN --security
+gh agent-plugin install OWNER/REPO PLUGIN --security --yes
 ```
+
+### Security scanning
+
+`preview` always performs lightweight structural checks. Add `--security` to
+`preview` or `install` to run the deeper PluginSpector-style scanner before any
+native plugin manager is invoked. The scanner is implemented in Go, works
+offline, does not execute plugin code, and never follows symlinks.
+
+The deeper scan checks agent-facing text and configuration for prompt
+injection, data exfiltration, privilege escalation, persistence, remote script
+execution, credential references, unsafe MCP configuration, hooks, scripts,
+and suspicious binaries. It prunes heavyweight directories such as `.git`,
+`node_modules`, `.venv`, `dist`, and `target`, and reports a partial scan when
+file, byte, or depth limits prevent complete inspection.
+
+Findings and `securityReport` are included in `--json` output. Risk scores use
+LOW, MEDIUM, HIGH, and CRITICAL bands. A score above 50, an unsafe MCP transport,
+or a path/symlink escape blocks preview or installation with exit code `5`.
+`--yes` and `--force` do not override the gate.
+
+For GitHub sources, `install --security` installs from the exact cached checkout
+that was scanned. A configured `PLUGIN@MARKETPLACE` selector cannot expose its
+source tree for verification, so combining it with `--security` exits `4`; use
+an `OWNER/REPO PLUGIN` or `--from-local` source instead.
+
+This mode is deterministic static analysis, not a proof of safety. It does not
+perform LLM analysis, YARA scanning, network vulnerability lookups, behavioral
+execution, or dependency installation.
 
 ### Phase 1 limitations
 
-- `--ref` (pinning a GitHub source to a revision) is honored by `preview`, which
-  fetches the requested branch, tag, or commit SHA and records the resolved
-  revision. `install` still rejects `--ref` until the native install path can pin
-  a revision (Phase 2).
+- `--ref` pins GitHub preview and installation to a cached local checkout. For
+  install, that checkout is registered with the native manager so the reviewed
+  revision is the revision installed.
 - `preview` of a `OWNER/REPO` source clones the repo into a regenerable cache
   under `~/.cache/gh-agent-plugin/` and discovers it there; `--from-local` is no
-  longer required. `install` of a remote source is still delegated to the native
-  CLI's own resolution.
+  longer required. A normal remote install is delegated to the native CLI's own
+  resolution; `install --security` instead delegates the scanned local checkout.
 - `list` parses native JSON for both Claude Code and Codex. `marketplace list`
   parses Claude Code's `--json`; Codex exposes no machine-readable marketplace
   listing yet, so that case is reported as an explicit note rather than a silent
