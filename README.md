@@ -96,3 +96,14 @@ go build -o gh-agent-plugin .
 The codebase uses only the Go standard library. Agent differences are isolated in
 `internal/adapter` behind a `Runner` interface, so adapters are unit-tested without
 the real `claude`/`codex` binaries.
+
+## Release
+
+Pushing a version tag publishes precompiled GitHub CLI extension binaries:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+gh release view v0.1.0 --repo f4ah6o/gh-agent-plugin
+gh extension install f4ah6o/gh-agent-plugin
+```
