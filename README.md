@@ -48,10 +48,11 @@ gh agent-plugin preview ./path/to/repo PLUGIN --from-local --json
 
 ### Phase 1 limitations
 
-- `--ref` (pinning a GitHub source to a revision) is honored by `preview`, which
-  fetches the requested branch, tag, or commit SHA and records the resolved
-  revision. `install` still rejects `--ref` until the native install path can pin
-  a revision (Phase 2).
+- `--ref` (pinning a GitHub source to a revision) is honored by both `preview` and
+  `install`. The requested branch, tag, or commit SHA is checked out into the
+  source cache, and the resolved revision is recorded. `install` registers that
+  pinned checkout as a local marketplace so the native agent installs the
+  reviewed revision. Marketplace selectors and local paths reject `--ref`.
 - `preview` of a `OWNER/REPO` source clones the repo into a regenerable cache
   under `~/.cache/gh-agent-plugin/` and discovers it there; `--from-local` is no
   longer required. `install` of a remote source is still delegated to the native
@@ -63,7 +64,9 @@ gh agent-plugin preview ./path/to/repo PLUGIN --from-local --json
 
 ### Agent selection and scope
 
-- `--agent` is repeatable; `--agent all` (or `--all`) targets every detected agent.
+- `--agent` is repeatable; `--agent all` targets every detected agent.
+- Bare `--all` is command-specific. For example, `update --all` updates every
+  installed plugin on the selected agents; it does not widen agent selection.
 - A single detected agent is implied; with multiple, `--agent` is required.
 - `--scope user|project|local` is delegated to agents that support it. Agents that
   do not (e.g. Codex has no scopes) return an explicit error rather than ignoring it.

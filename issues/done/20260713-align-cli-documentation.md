@@ -1,6 +1,6 @@
 # Align CLI documentation with implemented behavior
 
-Status: polished
+Status: done
 Model: unknown
 Created: 2026-07-13
 Updated: 2026-07-13
@@ -36,10 +36,10 @@ Make the README examples and limitations match the current command behavior with
 
 ## 受け入れ条件
 
-- [ ] README no longer claims that `install --ref` is rejected.
-- [ ] README states that `--ref` is supported for GitHub sources and rejected for marketplace selectors and local paths.
-- [ ] README distinguishes `--agent all` from command-specific bare `--all` behavior.
-- [ ] No README example contradicts the source syntax or agent-selection implementation.
+- [x] README no longer claims that `install --ref` is rejected.
+- [x] README states that `--ref` is supported for GitHub sources and rejected for marketplace selectors and local paths.
+- [x] README distinguishes `--agent all` from command-specific bare `--all` behavior.
+- [x] No README example contradicts the source syntax or agent-selection implementation.
 
 ## テスト計画
 
@@ -62,3 +62,6 @@ Make the README examples and limitations match the current command behavior with
 ## 注記
 
 - Related parent issue: issues/rejected/20260713-production-readiness-gaps.md
+- 2026-07-13: Implementation started for README source-pinning and agent-selection documentation.
+- 2026-07-13: Updated README source-pinning and agent-selection documentation; stale-text check, `go test ./...`, and Issue validation pass.
+- 2026-07-13: README documentation updated and verified against the implemented CLI behavior.
