@@ -99,11 +99,12 @@ the real `claude`/`codex` binaries.
 
 ## Release
 
-Pushing a version tag publishes precompiled GitHub CLI extension binaries:
+Pushing a CalVer tag in `YYYY.M.P` form publishes precompiled GitHub CLI extension
+binaries:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
-gh release view v0.1.0 --repo f4ah6o/gh-agent-plugin
+git tag 2026.7.1
+git push origin 2026.7.1
+gh release view 2026.7.1 --repo f4ah6o/gh-agent-plugin
 gh extension install f4ah6o/gh-agent-plugin
 ```
