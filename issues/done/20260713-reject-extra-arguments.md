@@ -1,6 +1,6 @@
 # Reject unexpected positional arguments
 
-Status: polished
+Status: done
 Model: unknown
 Created: 2026-07-13
 Updated: 2026-07-13
@@ -37,11 +37,11 @@ Reject every unexpected positional argument with exit code 2 while preserving va
 
 ## 受け入れ条件
 
-- [ ] Given a command with more positional arguments than its declared arity, when executed, then it exits 2 and performs no side effect.
-- [ ] Given valid flags interspersed with the declared positional arguments, when executed, then the command retains its current behavior.
-- [ ] Given a GitHub or local source with an extra positional argument, when parsed, then `source.Parse` returns exit code 2.
-- [ ] Given a marketplace selector with an extra positional argument, when parsed, then `source.Parse` returns exit code 2.
-- [ ] All command handlers have tests for their zero-, one-, or two-positional-argument boundary.
+- [x] Given a command with more positional arguments than its declared arity, when executed, then it exits 2 and performs no side effect.
+- [x] Given valid flags interspersed with the declared positional arguments, when executed, then the command retains its current behavior.
+- [x] Given a GitHub or local source with an extra positional argument, when parsed, then `source.Parse` returns exit code 2.
+- [x] Given a marketplace selector with an extra positional argument, when parsed, then `source.Parse` returns exit code 2.
+- [x] All command handlers have tests for their zero-, one-, or two-positional-argument boundary.
 
 ## テスト計画
 
@@ -67,3 +67,6 @@ Reject every unexpected positional argument with exit code 2 while preserving va
 ## 注記
 
 - Related parent issue: issues/rejected/20260713-production-readiness-gaps.md
+- 2026-07-13: Implementation started for strict positional-argument validation.
+- 2026-07-13: Added shared command arity validation, strict source parsing, table-driven boundary tests, and preserved interspersed-flag coverage; all Go and Issue checks pass.
+- 2026-07-13: Strict positional-argument validation and boundary tests are implemented and verified.

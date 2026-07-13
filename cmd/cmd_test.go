@@ -101,6 +101,47 @@ func TestInstall_InterspersedFlagsAfterPositionals(t *testing.T) {
 	}
 }
 
+func TestCommands_RejectExtraPositionals(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "list", args: []string{"list", "unexpected"}},
+		{name: "doctor", args: []string{"doctor", "unexpected"}},
+		{name: "remove", args: []string{"remove", "one", "two"}},
+		{name: "update", args: []string{"update", "one", "two"}},
+		{name: "marketplace add", args: []string{"marketplace", "add", "one", "two"}},
+		{name: "marketplace list", args: []string{"marketplace", "list", "unexpected"}},
+		{name: "marketplace update", args: []string{"marketplace", "update", "one", "two"}},
+		{name: "marketplace remove", args: []string{"marketplace", "remove", "one", "two"}},
+		{name: "issue list", args: []string{"issue", "list", "unexpected"}},
+		{name: "issue view", args: []string{"issue", "view", "1", "2"}},
+		{name: "issue comment", args: []string{"issue", "comment", "1", "2", "--body", "body"}},
+		{name: "pr comment", args: []string{"pr", "comment", "1", "2", "--body", "body"}},
+		{name: "pr comment list", args: []string{"pr", "comment", "list", "1", "2"}},
+		{name: "install source", args: []string{"install", "acme/plugins", "formatter", "extra", "--agent", "claude-code"}},
+		{name: "preview source", args: []string{"preview", "../testdata/sample-repo", "example", "extra", "--from-local"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &adapter.RecordingRunner{
+				LookPaths: map[string]string{
+					"claude": "/usr/bin/claude",
+					"gh":     "/usr/bin/gh",
+				},
+			}
+			env, _, errOut := newTestEnv(r)
+			code := Execute(tc.args, env)
+			if code != exit.InvalidArguments {
+				t.Fatalf("exit = %d, want %d; stderr: %s", code, exit.InvalidArguments, errOut.String())
+			}
+			if len(r.Calls) != 0 {
+				t.Fatalf("extra positional arguments must be rejected before native calls: %v", r.Calls)
+			}
+		})
+	}
+}
+
 // TestInstall_NoSpuriousMarketplaceRemovalOnFailure verifies that when the
 // native install fails, only marketplaces newly created by this call are rolled
 // back and a pre-existing marketplace is left untouched.

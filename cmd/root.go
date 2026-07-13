@@ -207,6 +207,23 @@ func (c *commonFlags) rejectReservedFlags(fs *flag.FlagSet) error {
 	return nil
 }
 
+// requirePositionals enforces a command's positional-argument arity after
+// parseArgs has collected positionals while allowing flags to be interspersed.
+func requirePositionals(command string, args []string, min, max int) error {
+	if len(args) >= min && len(args) <= max {
+		return nil
+	}
+	expected := fmt.Sprintf("between %d and %d", min, max)
+	if min == max {
+		expected = fmt.Sprintf("exactly %d", min)
+	}
+	msg := fmt.Sprintf("%s expects %s positional argument(s), got %d", command, expected, len(args))
+	if len(args) > max {
+		msg += "; unexpected: " + strings.Join(args[max:], " ")
+	}
+	return exit.Errorf(exit.InvalidArguments, "%s", msg)
+}
+
 // newFlagSet returns a FlagSet that writes errors to env.Stderr and does not
 // call os.Exit on parse errors.
 func newFlagSet(name string, env *Env) *flag.FlagSet {

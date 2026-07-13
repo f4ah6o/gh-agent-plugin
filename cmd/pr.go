@@ -53,12 +53,12 @@ func prCommentAdd(args []string, env *Env) error {
 	if err := cf.rejectReservedFlags(fs); err != nil {
 		return err
 	}
+	if err := requirePositionals("pr comment", pos, 1, 1); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
 
-	if len(pos) == 0 {
-		return exit.Errorf(exit.InvalidArguments, "usage: pr comment NUMBER --body TEXT")
-	}
 	if body == "" {
 		return exit.Errorf(exit.InvalidArguments, "--body is required")
 	}
@@ -95,12 +95,11 @@ func prCommentList(args []string, env *Env) error {
 	if err := cf.rejectReservedFlags(fs); err != nil {
 		return err
 	}
+	if err := requirePositionals("pr comment list", pos, 1, 1); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-
-	if len(pos) == 0 {
-		return exit.Errorf(exit.InvalidArguments, "usage: pr comment list NUMBER")
-	}
 
 	ghArgs := []string{"pr", "view", pos[0], "--json", "comments"}
 	if repo != "" {

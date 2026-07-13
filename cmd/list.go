@@ -14,10 +14,14 @@ func runList(args []string, env *Env) error {
 	var cf commonFlags
 	fs := newFlagSet("list", env)
 	cf.register(fs)
-	if _, err := parseArgs(fs, args); err != nil {
+	pos, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
 	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
+	if err := requirePositionals("list", pos, 0, 0); err != nil {
 		return err
 	}
 	cancel := cf.applyTimeout(env)

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
-	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
 	"github.com/f4ah6o/gh-agent-plugin/internal/output"
 )
 
@@ -22,11 +21,11 @@ func runRemove(args []string, env *Env) error {
 	if err := cf.rejectReservedFlags(fs); err != nil {
 		return err
 	}
+	if err := requirePositionals("remove", rest, 1, 1); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	if len(rest) == 0 {
-		return exit.Errorf(exit.InvalidArguments, "a plugin selector is required (PLUGIN@MARKETPLACE)")
-	}
 	selector := rest[0]
 
 	adapters, err := cf.selectAdapters(env)

@@ -38,10 +38,14 @@ func issueList(args []string, env *Env) error {
 	fs.StringVar(&label, "label", "", "filter by label")
 	fs.StringVar(&repo, "repo", "", "target repository (OWNER/REPO)")
 	fs.IntVar(&limit, "limit", 30, "maximum number of issues to list")
-	if _, err := parseArgs(fs, args); err != nil {
+	pos, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
 	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
+	if err := requirePositionals("issue list", pos, 0, 0); err != nil {
 		return err
 	}
 	cancel := cf.applyTimeout(env)
@@ -114,12 +118,11 @@ func issueView(args []string, env *Env) error {
 	if err := cf.rejectReservedFlags(fs); err != nil {
 		return err
 	}
+	if err := requirePositionals("issue view", pos, 1, 1); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-
-	if len(pos) == 0 {
-		return exit.Errorf(exit.InvalidArguments, "usage: issue view NUMBER")
-	}
 
 	fields := "number,title,state,body,author,labels,url,createdAt"
 	if withComments {
@@ -191,12 +194,12 @@ func issueComment(args []string, env *Env) error {
 	if err := cf.rejectReservedFlags(fs); err != nil {
 		return err
 	}
+	if err := requirePositionals("issue comment", pos, 1, 1); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
 
-	if len(pos) == 0 {
-		return exit.Errorf(exit.InvalidArguments, "usage: issue comment NUMBER --body TEXT")
-	}
 	if body == "" {
 		return exit.Errorf(exit.InvalidArguments, "--body is required")
 	}

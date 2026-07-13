@@ -58,8 +58,8 @@ func Parse(args []string, ref string, fromLocal bool) (Spec, error) {
 	}
 
 	if fromLocal {
-		if len(args) < 2 {
-			return Spec{}, exit.Errorf(exit.InvalidArguments, "local source requires PATH and PLUGIN")
+		if len(args) != 2 {
+			return Spec{}, exit.Errorf(exit.InvalidArguments, "local source expects exactly PATH and PLUGIN")
 		}
 		return Spec{Kind: KindLocal, Path: args[0], Plugin: args[1], Ref: ref}, nil
 	}
@@ -67,7 +67,10 @@ func Parse(args []string, ref string, fromLocal bool) (Spec, error) {
 	first := args[0]
 
 	// PLUGIN@MARKETPLACE selector (single argument containing '@', no slash).
-	if len(args) == 1 && strings.Contains(first, "@") && !strings.Contains(first, "/") {
+	if strings.Contains(first, "@") && !strings.Contains(first, "/") {
+		if len(args) != 1 {
+			return Spec{}, exit.Errorf(exit.InvalidArguments, "marketplace selector expects exactly PLUGIN@MARKETPLACE")
+		}
 		name, market, ok := splitSelector(first)
 		if !ok {
 			return Spec{}, exit.Errorf(exit.InvalidArguments, "invalid selector %q, expected PLUGIN@MARKETPLACE", first)
@@ -77,8 +80,8 @@ func Parse(args []string, ref string, fromLocal bool) (Spec, error) {
 
 	// OWNER/REPO PLUGIN github source.
 	if strings.Contains(first, "/") {
-		if len(args) < 2 {
-			return Spec{}, exit.Errorf(exit.InvalidArguments, "github source requires OWNER/REPO and PLUGIN")
+		if len(args) != 2 {
+			return Spec{}, exit.Errorf(exit.InvalidArguments, "github source expects exactly OWNER/REPO and PLUGIN")
 		}
 		if !validRepo(first) {
 			return Spec{}, exit.Errorf(exit.InvalidArguments, "invalid repository %q, expected OWNER/REPO", first)
