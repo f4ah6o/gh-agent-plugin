@@ -114,11 +114,6 @@ func TestCommands_RejectExtraPositionals(t *testing.T) {
 		{name: "marketplace list", args: []string{"marketplace", "list", "unexpected"}},
 		{name: "marketplace update", args: []string{"marketplace", "update", "one", "two"}},
 		{name: "marketplace remove", args: []string{"marketplace", "remove", "one", "two"}},
-		{name: "issue list", args: []string{"issue", "list", "unexpected"}},
-		{name: "issue view", args: []string{"issue", "view", "1", "2"}},
-		{name: "issue comment", args: []string{"issue", "comment", "1", "2", "--body", "body"}},
-		{name: "pr comment", args: []string{"pr", "comment", "1", "2", "--body", "body"}},
-		{name: "pr comment list", args: []string{"pr", "comment", "list", "1", "2"}},
 		{name: "install source", args: []string{"install", "acme/plugins", "formatter", "extra", "--agent", "claude-code"}},
 		{name: "preview source", args: []string{"preview", "../testdata/sample-repo", "example", "extra", "--from-local"}},
 	}
@@ -592,9 +587,16 @@ func TestList_ParsesClaudeJSON(t *testing.T) {
 }
 
 func TestUnknownCommand(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{})
-	if code := Execute([]string{"frobnicate"}, env); code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d", code, exit.InvalidArguments)
+	for _, name := range []string{"frobnicate", "issue", "pr"} {
+		t.Run(name, func(t *testing.T) {
+			env, _, errOut := newTestEnv(&adapter.RecordingRunner{})
+			if code := Execute([]string{name}, env); code != exit.InvalidArguments {
+				t.Fatalf("exit = %d, want %d", code, exit.InvalidArguments)
+			}
+			if strings.Contains(errOut.String(), "\n  "+name+" ") {
+				t.Fatalf("removed command %q still appears in help: %s", name, errOut.String())
+			}
+		})
 	}
 }
 
@@ -655,242 +657,3 @@ func (f *fakeAdapter) UpdatePlugin(context.Context, adapter.UpdateRequest) error
 func (f *fakeAdapter) RemovePlugin(context.Context, adapter.RemoveRequest) error   { return nil }
 func (f *fakeAdapter) EnablePlugin(context.Context, adapter.EnableRequest) error   { return nil }
 func (f *fakeAdapter) DisablePlugin(context.Context, adapter.DisableRequest) error { return nil }
-
-// ---- issue command tests ----
-
-func TestIssueList_NoGH_ExitAgentNotInstalled(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{}) // no gh in LookPaths
-	code := Execute([]string{"issue", "list"}, env)
-	if code != exit.AgentNotInstalled {
-		t.Fatalf("exit = %d, want %d (AgentNotInstalled)", code, exit.AgentNotInstalled)
-	}
-}
-
-func TestIssueList_TableOutput(t *testing.T) {
-	const ghPath = "/usr/bin/gh"
-	issueJSON := `[{"number":1,"title":"Fix bug","state":"open","author":{"login":"alice"},"createdAt":"2024-01-01","labels":[{"name":"bug"}]}]`
-	key := ghPath + " issue list --state open --limit 30 --json number,title,state,labels,author,createdAt,url"
-	r := &adapter.RecordingRunner{
-		LookPaths: map[string]string{"gh": ghPath},
-		Stdout:    map[string]string{key: issueJSON},
-	}
-	env, out, _ := newTestEnv(r)
-	code := Execute([]string{"issue", "list"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	got := out.String()
-	if !strings.Contains(got, "Fix bug") {
-		t.Fatalf("expected issue title in output, got: %s", got)
-	}
-	if !strings.Contains(got, "alice") {
-		t.Fatalf("expected author in output, got: %s", got)
-	}
-}
-
-func TestIssueList_JSONPassthrough(t *testing.T) {
-	const ghPath = "/usr/bin/gh"
-	issueJSON := `[{"number":2,"title":"Add feature","state":"open","author":{"login":"bob"},"createdAt":"2024-02-01","labels":[]}]`
-	key := ghPath + " issue list --state open --limit 30 --json number,title,state,labels,author,createdAt,url"
-	r := &adapter.RecordingRunner{
-		LookPaths: map[string]string{"gh": ghPath},
-		Stdout:    map[string]string{key: issueJSON},
-	}
-	env, out, _ := newTestEnv(r)
-	code := Execute([]string{"issue", "list", "--json"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	// Output should be the raw JSON from gh
-	if !strings.Contains(out.String(), "Add feature") {
-		t.Fatalf("expected raw JSON passthrough, got: %s", out.String())
-	}
-}
-
-func TestIssueList_StateFlag(t *testing.T) {
-	const ghPath = "/usr/bin/gh"
-	key := ghPath + " issue list --state closed --limit 30 --json number,title,state,labels,author,createdAt,url"
-	r := &adapter.RecordingRunner{
-		LookPaths: map[string]string{"gh": ghPath},
-		Stdout:    map[string]string{key: `[]`},
-	}
-	env, _, _ := newTestEnv(r)
-	code := Execute([]string{"issue", "list", "--state", "closed"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-}
-
-func TestIssueView_MissingNumber(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{LookPaths: map[string]string{"gh": "/usr/bin/gh"}})
-	code := Execute([]string{"issue", "view"}, env)
-	if code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d (InvalidArguments)", code, exit.InvalidArguments)
-	}
-}
-
-func TestIssueView_Output(t *testing.T) {
-	const ghPath = "/usr/bin/gh"
-	viewJSON := `{"number":3,"title":"View me","state":"open","body":"body text","author":{"login":"carol"},"url":"https://github.com/o/r/issues/3","createdAt":"2024-03-01","labels":[]}`
-	key := ghPath + " issue view 3 --json number,title,state,body,author,labels,url,createdAt"
-	r := &adapter.RecordingRunner{
-		LookPaths: map[string]string{"gh": ghPath},
-		Stdout:    map[string]string{key: viewJSON},
-	}
-	env, out, _ := newTestEnv(r)
-	code := Execute([]string{"issue", "view", "3"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	got := out.String()
-	if !strings.Contains(got, "View me") {
-		t.Fatalf("expected title in output, got: %s", got)
-	}
-	if !strings.Contains(got, "body text") {
-		t.Fatalf("expected body in output, got: %s", got)
-	}
-}
-
-func TestIssueComment_MissingNumber(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{LookPaths: map[string]string{"gh": "/usr/bin/gh"}})
-	code := Execute([]string{"issue", "comment", "--body", "hi"}, env)
-	if code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d (InvalidArguments)", code, exit.InvalidArguments)
-	}
-}
-
-func TestIssueComment_MissingBody(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{LookPaths: map[string]string{"gh": "/usr/bin/gh"}})
-	code := Execute([]string{"issue", "comment", "5"}, env)
-	if code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d (InvalidArguments)", code, exit.InvalidArguments)
-	}
-}
-
-func TestIssueComment_DryRun(t *testing.T) {
-	env, out, _ := newTestEnv(&adapter.RecordingRunner{LookPaths: map[string]string{"gh": "/usr/bin/gh"}})
-	code := Execute([]string{"issue", "comment", "7", "--body", "hello", "--dry-run"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if !strings.Contains(out.String(), "dry-run") {
-		t.Fatalf("expected dry-run output, got: %s", out.String())
-	}
-}
-
-func TestIssueComment_Success(t *testing.T) {
-	const ghPath = "/usr/bin/gh"
-	key := ghPath + " issue comment 9 --body nice work"
-	r := &adapter.RecordingRunner{
-		LookPaths: map[string]string{"gh": ghPath},
-		Stdout:    map[string]string{key: ""},
-	}
-	env, out, _ := newTestEnv(r)
-	code := Execute([]string{"issue", "comment", "9", "--body", "nice work"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if !strings.Contains(out.String(), "comment added") {
-		t.Fatalf("expected success message, got: %s", out.String())
-	}
-}
-
-func TestIssueUnknownSubcommand(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{})
-	code := Execute([]string{"issue", "frobnicate"}, env)
-	if code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d", code, exit.InvalidArguments)
-	}
-}
-
-// ---- pr command tests ----
-
-func TestPRComment_NoGH_ExitAgentNotInstalled(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{}) // no gh in LookPaths
-	code := Execute([]string{"pr", "comment", "1", "--body", "hi"}, env)
-	if code != exit.AgentNotInstalled {
-		t.Fatalf("exit = %d, want %d (AgentNotInstalled)", code, exit.AgentNotInstalled)
-	}
-}
-
-func TestPRComment_MissingNumber(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{LookPaths: map[string]string{"gh": "/usr/bin/gh"}})
-	code := Execute([]string{"pr", "comment", "--body", "hi"}, env)
-	if code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d (InvalidArguments)", code, exit.InvalidArguments)
-	}
-}
-
-func TestPRComment_MissingBody(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{LookPaths: map[string]string{"gh": "/usr/bin/gh"}})
-	code := Execute([]string{"pr", "comment", "42"}, env)
-	if code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d (InvalidArguments)", code, exit.InvalidArguments)
-	}
-}
-
-func TestPRComment_DryRun(t *testing.T) {
-	env, out, _ := newTestEnv(&adapter.RecordingRunner{LookPaths: map[string]string{"gh": "/usr/bin/gh"}})
-	code := Execute([]string{"pr", "comment", "42", "--body", "LGTM", "--dry-run"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if !strings.Contains(out.String(), "dry-run") {
-		t.Fatalf("expected dry-run output, got: %s", out.String())
-	}
-}
-
-func TestPRComment_Success(t *testing.T) {
-	const ghPath = "/usr/bin/gh"
-	key := ghPath + " pr comment 42 --body LGTM"
-	r := &adapter.RecordingRunner{
-		LookPaths: map[string]string{"gh": ghPath},
-		Stdout:    map[string]string{key: ""},
-	}
-	env, out, _ := newTestEnv(r)
-	code := Execute([]string{"pr", "comment", "42", "--body", "LGTM"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if !strings.Contains(out.String(), "comment added") {
-		t.Fatalf("expected success message, got: %s", out.String())
-	}
-}
-
-func TestPRCommentList_MissingNumber(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{LookPaths: map[string]string{"gh": "/usr/bin/gh"}})
-	code := Execute([]string{"pr", "comment", "list"}, env)
-	if code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d (InvalidArguments)", code, exit.InvalidArguments)
-	}
-}
-
-func TestPRCommentList_Output(t *testing.T) {
-	const ghPath = "/usr/bin/gh"
-	prJSON := `{"comments":[{"author":{"login":"dave"},"body":"looks good","url":"https://github.com/o/r/pull/5#issuecomment-1"}]}`
-	key := ghPath + " pr view 5 --json comments"
-	r := &adapter.RecordingRunner{
-		LookPaths: map[string]string{"gh": ghPath},
-		Stdout:    map[string]string{key: prJSON},
-	}
-	env, out, _ := newTestEnv(r)
-	code := Execute([]string{"pr", "comment", "list", "5"}, env)
-	if code != exit.OK {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	got := out.String()
-	if !strings.Contains(got, "dave") {
-		t.Fatalf("expected author in output, got: %s", got)
-	}
-	if !strings.Contains(got, "looks good") {
-		t.Fatalf("expected comment body in output, got: %s", got)
-	}
-}
-
-func TestPRUnknownSubcommand(t *testing.T) {
-	env, _, _ := newTestEnv(&adapter.RecordingRunner{})
-	code := Execute([]string{"pr", "frobnicate"}, env)
-	if code != exit.InvalidArguments {
-		t.Fatalf("exit = %d, want %d", code, exit.InvalidArguments)
-	}
-}

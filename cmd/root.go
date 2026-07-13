@@ -56,8 +56,6 @@ var commands = map[string]commandFunc{
 	"doctor":      runDoctor,
 	"search":      runSearch,
 	"publish":     runPublish,
-	"issue":       runIssue,
-	"pr":          runPR,
 }
 
 // Main is the process entry point. It builds a production Env and returns the
@@ -122,8 +120,6 @@ Commands:
   update      Update plugins
   marketplace Manage configured marketplaces (add/list/update/remove)
   doctor      Diagnose the environment and agent plugin support
-  issue       Manage GitHub issues (list|view|comment)
-  pr          Manage GitHub pull requests (comment)
   search      (phase 2) Search marketplaces
   publish     (phase 2) Publish a plugin
 
