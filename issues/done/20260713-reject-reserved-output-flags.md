@@ -1,6 +1,6 @@
 # Reject unsupported output filtering flags
 
-Status: polished
+Status: done
 Model: unknown
 Created: 2026-07-13
 Updated: 2026-07-13
@@ -37,17 +37,17 @@ Reject each unsupported flag explicitly with exit code 2 before any agent, cache
 
 ## 受け入れ条件
 
-- [ ] Given any supported command with `--jq`, when executed, then it exits 2 with an unsupported-flag error and performs no operation.
-- [ ] Given any supported command with `--template`, when executed, then it exits 2 with an unsupported-flag error and performs no operation.
-- [ ] Given any supported command with `--json-fields`, when executed, then it exits 2 with an unsupported-flag error and performs no operation.
-- [ ] Supplying multiple reserved flags reports the deterministic first flag and still exits 2.
-- [ ] Existing commands without reserved flags preserve their output and exit behavior.
+- [x] Given any supported command with `--jq`, when executed, then it exits 2 with an unsupported-flag error and performs no operation.
+- [x] Given any supported command with `--template`, when executed, then it exits 2 with an unsupported-flag error and performs no operation.
+- [x] Given any supported command with `--json-fields`, when executed, then it exits 2 with an unsupported-flag error and performs no operation.
+- [x] Supplying multiple reserved flags reports the deterministic first flag and still exits 2.
+- [x] Existing commands without reserved flags preserve their output and exit behavior.
 
 ## テスト計画
 
 - Add table-driven command tests covering all three flags on a read command and a mutation command.
 - Assert the fake adapter/runner has no calls when validation fails.
-- Update `TestPreview_ReservedFlags_Warning` and `TestSmoke_Install_ReservedFlags_Warn` to assert exit code 2 and the new error text.
+- Update `TestPreview_ReservedFlagsRejected` and `TestSmoke_Install_ReservedFlagsRejected` to assert exit code 2 and the new error text; add install-side-effect and deterministic-order coverage.
 - Run `go test ./...`, `go vet ./...`, and `git diff --check`.
 
 ## リスク
@@ -65,3 +65,6 @@ Reject each unsupported flag explicitly with exit code 2 before any agent, cache
 ## 注記
 
 - Related parent issue: issues/rejected/20260713-production-readiness-gaps.md
+- 2026-07-13: Implementation started for explicit rejection of unsupported output-filtering flags.
+- 2026-07-13: Replaced warning-only handling with exit code 2 validation across all common-flag commands; unit, smoke, vet, build, and Issue checks pass.
+- 2026-07-13: Unsupported output-filtering flags now fail explicitly before command side effects.

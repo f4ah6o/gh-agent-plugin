@@ -41,6 +41,9 @@ func issueList(args []string, env *Env) error {
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
 
@@ -67,11 +70,11 @@ func issueList(args []string, env *Env) error {
 	}
 
 	var issues []struct {
-		Number    int    `json:"number"`
-		Title     string `json:"title"`
-		State     string `json:"state"`
-		Author    struct{ Login string } `json:"author"`
-		CreatedAt string `json:"createdAt"`
+		Number    int                     `json:"number"`
+		Title     string                  `json:"title"`
+		State     string                  `json:"state"`
+		Author    struct{ Login string }  `json:"author"`
+		CreatedAt string                  `json:"createdAt"`
 		Labels    []struct{ Name string } `json:"labels"`
 	}
 	if err := json.Unmarshal(raw, &issues); err != nil {
@@ -108,6 +111,9 @@ func issueView(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
 
@@ -135,13 +141,13 @@ func issueView(args []string, env *Env) error {
 	}
 
 	var iss struct {
-		Number    int    `json:"number"`
-		Title     string `json:"title"`
-		State     string `json:"state"`
-		Body      string `json:"body"`
-		Author    struct{ Login string } `json:"author"`
-		URL       string `json:"url"`
-		CreatedAt string `json:"createdAt"`
+		Number    int                     `json:"number"`
+		Title     string                  `json:"title"`
+		State     string                  `json:"state"`
+		Body      string                  `json:"body"`
+		Author    struct{ Login string }  `json:"author"`
+		URL       string                  `json:"url"`
+		CreatedAt string                  `json:"createdAt"`
 		Labels    []struct{ Name string } `json:"labels"`
 		Comments  []struct {
 			Author struct{ Login string } `json:"author"`
@@ -180,6 +186,9 @@ func issueComment(args []string, env *Env) error {
 	fs.StringVar(&repo, "repo", "", "target repository (OWNER/REPO)")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
+		return err
+	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
 		return err
 	}
 	cancel := cf.applyTimeout(env)

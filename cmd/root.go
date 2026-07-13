@@ -190,19 +190,21 @@ func (c *commonFlags) applyTimeout(env *Env) func() {
 	return cancel
 }
 
-// warnReservedFlags emits a stderr warning for each output flag that was
-// supplied but is not yet implemented. Callers always receive empty output for
-// these flags; the warning prevents silent mis-use.
-func (c *commonFlags) warnReservedFlags(env *Env) {
-	if c.jq != "" {
-		fmt.Fprintln(env.Stderr, "warning: --jq is not yet implemented and will be ignored")
+// rejectReservedFlags rejects output-filtering flags that are parsed for future
+// compatibility but are not implemented. FlagSet.Visit distinguishes an
+// explicitly supplied empty value (for example, --jq=) from an omitted flag.
+func (c *commonFlags) rejectReservedFlags(fs *flag.FlagSet) error {
+	var supplied = map[string]bool{}
+	fs.Visit(func(f *flag.Flag) {
+		supplied[f.Name] = true
+	})
+	for _, name := range []string{"jq", "template", "json-fields"} {
+		if supplied[name] {
+			return exit.Errorf(exit.InvalidArguments,
+				"unsupported flag --%s: output filtering is not implemented", name)
+		}
 	}
-	if c.template != "" {
-		fmt.Fprintln(env.Stderr, "warning: --template is not yet implemented and will be ignored")
-	}
-	if c.jsonFields != "" {
-		fmt.Fprintln(env.Stderr, "warning: --json-fields is not yet implemented and will be ignored")
-	}
+	return nil
 }
 
 // newFlagSet returns a FlagSet that writes errors to env.Stderr and does not

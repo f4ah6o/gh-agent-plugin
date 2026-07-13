@@ -32,9 +32,11 @@ func runPreview(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	cf.warnReservedFlags(env)
 	_ = security // preview always reports static findings; --security is reserved.
 
 	spec, err := source.Parse(pos, cf.ref, cf.fromLocal)

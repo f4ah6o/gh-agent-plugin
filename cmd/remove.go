@@ -19,9 +19,11 @@ func runRemove(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	cf.warnReservedFlags(env)
 	if len(rest) == 0 {
 		return exit.Errorf(exit.InvalidArguments, "a plugin selector is required (PLUGIN@MARKETPLACE)")
 	}

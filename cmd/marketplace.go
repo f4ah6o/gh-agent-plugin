@@ -37,9 +37,11 @@ func marketplaceAdd(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	cf.warnReservedFlags(env)
 	if len(rest) < 1 {
 		return exit.Errorf(exit.InvalidArguments, "usage: marketplace add SOURCE (OWNER/REPO, URL, or local path)")
 	}
@@ -69,9 +71,11 @@ func marketplaceList(args []string, env *Env) error {
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	cf.warnReservedFlags(env)
 	adapters := env.Reg.Installed(env.Ctx)
 	if len(cf.agents) > 0 {
 		sel, err := cf.selectAdapters(env)
@@ -114,9 +118,11 @@ func marketplaceUpdate(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	cf.warnReservedFlags(env)
 	var name string
 	if len(rest) > 0 {
 		name = rest[0]
@@ -147,9 +153,11 @@ func marketplaceRemove(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	cf.warnReservedFlags(env)
 	if len(rest) == 0 {
 		return exit.Errorf(exit.InvalidArguments, "usage: marketplace remove NAME")
 	}

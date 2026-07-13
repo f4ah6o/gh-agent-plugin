@@ -406,17 +406,65 @@ func TestPreview_NoCache_InvalidatesAndReclones(t *testing.T) {
 	}
 }
 
-// TestPreview_ReservedFlags_Warning checks that --jq and --template emit
-// warnings rather than silently being ignored.
-func TestPreview_ReservedFlags_Warning(t *testing.T) {
-	env, _, errOut := newTestEnv(&adapter.RecordingRunner{})
-	_ = Execute([]string{"preview", "../testdata/sample-repo", "example", "--from-local", "--jq", ".plugin.name", "--template", "{{.}}"}, env)
-	stderr := errOut.String()
-	if !strings.Contains(stderr, "--jq") {
-		t.Errorf("expected --jq warning in stderr:\n%s", stderr)
+// TestPreview_ReservedFlagsRejected checks that each unsupported output flag is
+// rejected before preview resolves or inspects a source.
+func TestPreview_ReservedFlagsRejected(t *testing.T) {
+	cases := []struct {
+		name  string
+		flag  string
+		value string
+	}{
+		{name: "jq", flag: "--jq", value: ".plugin.name"},
+		{name: "template", flag: "--template", value: "{{.}}"},
+		{name: "json-fields", flag: "--json-fields", value: "plugin"},
+		{name: "jq-empty", flag: "--jq", value: ""},
 	}
-	if !strings.Contains(stderr, "--template") {
-		t.Errorf("expected --template warning in stderr:\n%s", stderr)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &adapter.RecordingRunner{}
+			env, _, errOut := newTestEnv(r)
+			args := []string{"preview", "../testdata/sample-repo", "example", "--from-local", tc.flag, tc.value}
+			code := Execute(args, env)
+			if code != exit.InvalidArguments {
+				t.Fatalf("exit = %d, want %d; stderr: %s", code, exit.InvalidArguments, errOut.String())
+			}
+			if !strings.Contains(errOut.String(), "unsupported flag "+tc.flag) {
+				t.Fatalf("expected unsupported flag error for %s, stderr: %s", tc.flag, errOut.String())
+			}
+			if len(r.Calls) != 0 {
+				t.Fatalf("reserved flag must be rejected before native calls: %v", r.Calls)
+			}
+		})
+	}
+}
+
+func TestInstall_ReservedFlagsRejectedBeforeNativeCall(t *testing.T) {
+	for _, flag := range []string{"--jq", "--template", "--json-fields"} {
+		t.Run(flag, func(t *testing.T) {
+			r := &adapter.RecordingRunner{LookPaths: map[string]string{"claude": "/usr/bin/claude"}}
+			env, _, errOut := newTestEnv(r)
+			code := Execute([]string{"install", "formatter@company", "--agent", "claude-code", flag, "value"}, env)
+			if code != exit.InvalidArguments {
+				t.Fatalf("exit = %d, want %d; stderr: %s", code, exit.InvalidArguments, errOut.String())
+			}
+			if len(r.Calls) != 0 {
+				t.Fatalf("reserved flag must be rejected before native calls: %v", r.Calls)
+			}
+		})
+	}
+}
+
+func TestReservedFlags_FirstFlagIsDeterministic(t *testing.T) {
+	env, _, errOut := newTestEnv(&adapter.RecordingRunner{})
+	code := Execute([]string{
+		"preview", "../testdata/sample-repo", "example", "--from-local",
+		"--template", "{{.}}", "--json-fields", "plugin", "--jq", ".plugin.name",
+	}, env)
+	if code != exit.InvalidArguments {
+		t.Fatalf("exit = %d, want %d", code, exit.InvalidArguments)
+	}
+	if got := errOut.String(); !strings.Contains(got, "unsupported flag --jq") {
+		t.Fatalf("expected deterministic --jq error, stderr: %s", got)
 	}
 }
 

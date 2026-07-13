@@ -40,9 +40,11 @@ func runDoctor(args []string, env *Env) error {
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	cf.warnReservedFlags(env)
 
 	rep := doctorReport{CachePath: cacheDir()}
 	if _, err := os.Stat(rep.CachePath); err == nil {

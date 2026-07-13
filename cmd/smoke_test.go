@@ -154,11 +154,14 @@ func TestSmoke_Install_GitHubSource_CodexFallback(t *testing.T) {
 	}
 }
 
-func TestSmoke_Install_ReservedFlags_Warn(t *testing.T) {
+func TestSmoke_Install_ReservedFlagsRejected(t *testing.T) {
 	binary, env := smokeEnv(t)
-	_, stderr, _ := runSmoke(t, binary, env, "install", "hello@acme", "--agent", "claude-code", "--jq", ".results")
-	if !strings.Contains(stderr, "--jq") {
-		t.Errorf("expected --jq warning in stderr:\n%s", stderr)
+	_, stderr, code := runSmoke(t, binary, env, "install", "hello@acme", "--agent", "claude-code", "--jq", ".results")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stderr, "unsupported flag --jq") {
+		t.Errorf("expected unsupported --jq error in stderr:\n%s", stderr)
 	}
 }
 

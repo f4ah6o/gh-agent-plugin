@@ -17,9 +17,11 @@ func runList(args []string, env *Env) error {
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
-	cf.warnReservedFlags(env)
 
 	// list defaults to all detected agents rather than requiring a selection.
 	var adapters []adapter.Adapter

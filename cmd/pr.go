@@ -50,6 +50,9 @@ func prCommentAdd(args []string, env *Env) error {
 	if err != nil {
 		return err
 	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
+		return err
+	}
 	cancel := cf.applyTimeout(env)
 	defer cancel()
 
@@ -87,6 +90,9 @@ func prCommentList(args []string, env *Env) error {
 	fs.StringVar(&repo, "repo", "", "target repository (OWNER/REPO)")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
+		return err
+	}
+	if err := cf.rejectReservedFlags(fs); err != nil {
 		return err
 	}
 	cancel := cf.applyTimeout(env)
