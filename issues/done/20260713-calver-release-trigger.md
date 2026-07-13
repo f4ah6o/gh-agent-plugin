@@ -1,6 +1,6 @@
 # Align release workflow with CalVer tags
 
-Status: doing
+Status: done
 Model: unknown
 Created: 2026-07-13
 Updated: 2026-07-13
@@ -36,9 +36,9 @@ Use `YYYY.M.P` CalVer tags, such as `2026.7.1`, as the only documented release c
 
 ## 受け入れ条件
 
-- [ ] Given a push of tag `2026.7.1`, when GitHub Actions evaluates the workflow, then the release job is selected and the CalVer validation passes.
-- [ ] Given a tag such as `2026.7`, when the release job is selected by the broad `20*` trigger, then the validation step fails before precompilation.
-- [ ] Given a tag such as `v2026.7.1`, when GitHub Actions evaluates workflow triggers, then the release workflow is not selected.
+- [x] Given a push of tag `2026.7.1`, when GitHub Actions evaluates the workflow, then the release job is selected and the CalVer validation passes.
+- [x] Given a tag such as `2026.7`, when the release job is selected by the broad `20*` trigger, then the validation step fails before precompilation.
+- [x] Given a tag such as `v2026.7.1`, when GitHub Actions evaluates workflow triggers, then the release workflow is not selected.
 - [x] The workflow still uses `cli/gh-extension-precompile@v2` with `go_version_file: go.mod` and `contents: write` permission.
 - [x] README release commands consistently use the `YYYY.M.P` format.
 
@@ -68,3 +68,5 @@ Use `YYYY.M.P` CalVer tags, such as `2026.7.1`, as the only documented release c
 - 2026-07-13: Implementation started on the CalVer release workflow and README release contract.
 - 2026-07-13: Updated `.github/workflows/release.yml` and `README.md`; local regex and Go checks pass. `actionlint` is unavailable and real GitHub Actions tag verification remains pending.
 - 2026-07-13: Clarified acceptance behavior for malformed CalVer tags versus unsupported `v`-prefixed tags after diff review.
+- 2026-07-13: Pushed tag `2026.7.1`; GitHub Actions release run `29224204810` completed successfully.
+- 2026-07-13: CalVer tag 2026.7.1 successfully selected and completed release workflow run 29224204810.
