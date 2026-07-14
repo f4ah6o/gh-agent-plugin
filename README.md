@@ -33,7 +33,8 @@ gh agent-plugin <command> [arguments] [flags]
 | `update [plugin] [--all]`       | Update plugins                                           |
 | `marketplace add/list/update/remove` | Manage configured marketplaces                     |
 | `doctor`                        | Diagnose the environment and agent plugin support        |
-| `search` / `publish`            | Phase 2 (not yet implemented)                            |
+| `search <query>`                | Search public GitHub plugin and marketplace manifests   |
+| `publish`                       | Phase 2 (not yet implemented)                            |
 
 Aliases: `add`=`install`, `rm`/`uninstall`=`remove`, `ls`=`list`.
 
@@ -44,6 +45,8 @@ gh agent-plugin install OWNER/REPO PLUGIN --agent claude-code
 gh agent-plugin install PLUGIN@MARKETPLACE --agent codex
 gh agent-plugin install ./path/to/repo PLUGIN --from-local
 gh agent-plugin preview ./path/to/repo PLUGIN --from-local --json
+gh agent-plugin search "code review" --limit 10 --json
+gh agent-plugin search terraform --owner acme
 ```
 
 ### Phase 1 limitations
@@ -61,6 +64,29 @@ gh agent-plugin preview ./path/to/repo PLUGIN --from-local --json
   parses Claude Code's `--json`; Codex exposes no machine-readable marketplace
   listing yet, so that case is reported as an explicit note rather than a silent
   empty result.
+
+### Search
+
+`search` uses GitHub code search to find public repositories containing Claude
+Code or Codex plugin and marketplace manifests. It does not execute repository
+content, invoke a native agent, or modify marketplace configuration.
+
+```bash
+gh agent-plugin search terraform
+gh agent-plugin search "code review" --owner acme --limit 10 --page 2
+gh agent-plugin search formatter --json
+```
+
+Use `repository` and `name` from a direct `plugin` result with
+`gh agent-plugin install OWNER/REPO PLUGIN`. A `marketplace-plugin` result also
+contains `marketplace` and a `selector` such as `formatter@company`; add its
+`repository` as a marketplace before installing that selector.
+
+Search supports `--owner`, `--limit`, `--page`, and `--json`. JSON output has a
+stable `results` array with `type`, `name`, `repository`, `path`, `agents`, and
+`description`, plus marketplace fields when applicable. Results are ranked by
+manifest relevance and may be incomplete when GitHub reports an incomplete
+search.
 
 ### Agent selection and scope
 

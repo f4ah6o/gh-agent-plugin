@@ -16,6 +16,7 @@ import (
 	"github.com/f4ah6o/gh-agent-plugin/internal/adapter"
 	"github.com/f4ah6o/gh-agent-plugin/internal/cache"
 	"github.com/f4ah6o/gh-agent-plugin/internal/exit"
+	"github.com/f4ah6o/gh-agent-plugin/internal/githubapi"
 )
 
 // defaultTimeout is the maximum time any command is allowed to run before
@@ -32,6 +33,7 @@ type Env struct {
 	Reg    *adapter.Registry
 	Cache  *cache.Cache
 	Runner adapter.Runner
+	GitHub githubapi.Client
 }
 
 // commandFunc is the signature every subcommand implements.
@@ -70,6 +72,7 @@ func Main(args []string) int {
 		Reg:    adapter.NewRegistry(adapter.ExecRunner{}),
 		Runner: adapter.ExecRunner{},
 	}
+	env.GitHub = githubapi.New(env.Runner)
 	// A nil cache here defers the "cannot determine cache dir" error to the one
 	// command (preview of a GitHub source) that actually needs it, so the rest of
 	// the CLI keeps working even in an environment without a usable cache dir.
@@ -120,7 +123,7 @@ Commands:
   update      Update plugins
   marketplace Manage configured marketplaces (add/list/update/remove)
   doctor      Diagnose the environment and agent plugin support
-  search      (phase 2) Search marketplaces
+  search      Search public GitHub plugin and marketplace manifests
   publish     (phase 2) Publish a plugin
 
 Aliases: add=install, rm/uninstall=remove, ls=list
